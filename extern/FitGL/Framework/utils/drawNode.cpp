@@ -1,6 +1,7 @@
 #pragma once
 
 #include <utils/utils.h>
+#define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/string_cast.hpp>
 void drawNode(ProgramObject &program, NodeShared const&node, glm::mat4 parentMat) {
 	glm::mat4 useMat = parentMat * node->getMatrix();
