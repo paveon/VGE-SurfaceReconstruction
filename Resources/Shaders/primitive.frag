@@ -32,7 +32,7 @@
 #version 420
 
 in vec3 positionV;
-in vec3 colorV;
+in vec3 normalV;
 
 out vec4 fragColor;
 
@@ -130,31 +130,33 @@ float cnoise(vec3 P)
 }
 
 void main() {
-	if (textureSource == TEX_SOURCE_VERTEX) {
-		fragColor = (textureType == TEX_TYPE_NONE) ? vec4(primitiveColor, 1.0) : vec4(colorV, 1.0);
-	}
-	else {
-		switch (textureType) {
-			case TEX_TYPE_NONE:
-				fragColor = vec4(primitiveColor, 1.0);
-				break;
-			case TEX_TYPE_CHECKERBOARD:
-				//fragColor = vec4(mix(vec3(1, 0, 0), vec3(0, 1, 0), fract(length(positionV))), 1.0);
-				//fragColor = ((mod(positionV.x + positionV.y + positionV.z, 1) > 0.5) ? vec4(1,1,1,1) : vec4(0,0,0,1));
+	fragColor = vec4(primitiveColor, 1.0);
 
-				float checkSize = 2;
-				float fmodResult = mod(floor(checkSize * positionV.x) + floor(checkSize * positionV.y) + floor(checkSize * positionV.z), 2.0);
-				float fin = max(sign(fmodResult), 0.0);
-				fragColor = vec4(fin, fin, fin, 1.0);
+	// if (textureSource == TEX_SOURCE_VERTEX) {
+	// 	fragColor = (textureType == TEX_TYPE_NONE) ? vec4(primitiveColor, 1.0) : vec4(colorV, 1.0);
+	// }
+	// else {
+	// 	switch (textureType) {
+	// 		case TEX_TYPE_NONE:
+	// 			fragColor = vec4(primitiveColor, 1.0);
+	// 			break;
+	// 		case TEX_TYPE_CHECKERBOARD:
+	// 			//fragColor = vec4(mix(vec3(1, 0, 0), vec3(0, 1, 0), fract(length(positionV))), 1.0);
+	// 			//fragColor = ((mod(positionV.x + positionV.y + positionV.z, 1) > 0.5) ? vec4(1,1,1,1) : vec4(0,0,0,1));
 
-				//float n = cnoise(positionV);
-				//fragColor = vec4(0.5 + vec3(n, n, n), 1.0);
+	// 			float checkSize = 2;
+	// 			float fmodResult = mod(floor(checkSize * positionV.x) + floor(checkSize * positionV.y) + floor(checkSize * positionV.z), 2.0);
+	// 			float fin = max(sign(fmodResult), 0.0);
+	// 			fragColor = vec4(fin, fin, fin, 1.0);
 
-				//float sineValue = mod(abs(sin(4 * positionV.x * 3.1415) + sin(4 * positionV.y * 3.1415) + sin(4 * positionV.z * 3.1415)), 1);
-				//vec3 color = vec3(sineValue, 0, 0);
-				//fragColor = vec4(color, 1);
-				//fragColor = vec4(colorV, 1.0);
-				break;
-		}
-	}
+	// 			//float n = cnoise(positionV);
+	// 			//fragColor = vec4(0.5 + vec3(n, n, n), 1.0);
+
+	// 			//float sineValue = mod(abs(sin(4 * positionV.x * 3.1415) + sin(4 * positionV.y * 3.1415) + sin(4 * positionV.z * 3.1415)), 1);
+	// 			//vec3 color = vec3(sineValue, 0, 0);
+	// 			//fragColor = vec4(color, 1);
+	// 			//fragColor = vec4(colorV, 1.0);
+	// 			break;
+	// 	}
+	// }
 }     

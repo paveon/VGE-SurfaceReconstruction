@@ -26,7 +26,13 @@
 *.exe
 *.out
 *.app
+*.dat
+*.pcd
+*.tar.gz
 
+imgui.ini
 .idea
+.vscode
+build/
 cmake-build-debug
 bin/*
