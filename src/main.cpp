@@ -3,10 +3,11 @@
 #include <iostream>
 #include <thread>
 #include <chrono>
+#include <tuple>
 
-//#include <pcl/common/common.h>
-//#include <pcl/common/vector_average.h>
-//#include <pcl/Vertices.h>
+#include <pcl/common/common.h>
+#include <pcl/common/vector_average.h>
+#include <pcl/Vertices.h>
 
 //#include <pcl/surface/3rdparty/poisson4/octree_poisson.h>
 //#include <pcl/surface/3rdparty/poisson4/sparse_matrix.h>
@@ -16,30 +17,24 @@
 //#include <pcl/surface/3rdparty/poisson4/geometry.h>
 
 #include <pcl/point_types.h>
-#include <pcl/common/common_headers.h>
-#include <pcl/features/normal_3d.h>
+// #include <pcl/common/common_headers.h>
+// #include <pcl/features/normal_3d.h>
 #include <pcl/io/pcd_io.h>
-#include <pcl/visualization/pcl_visualizer.h>
-#include <pcl/features/normal_3d.h>
-#include <pcl/search/impl/search.hpp>
+// #include <pcl/visualization/pcl_visualizer.h>
+// #include <pcl/features/normal_3d.h>
+// #include <pcl/search/impl/search.hpp>
+#include <pcl/search/kdtree.h>
 
-//#include <pcl/surface/poisson.h>
-#include "poisson2.h"
+// #include <pcl/surface/poisson.h>
+// #include <pcl/surface/marching_cubes_hoppe.h>
 
 #include <BaseApp.h>
 #include <Loader.h>
 #include <Gui.h>
 #include "bunny.h"
 
-struct BasicVertex
-{
-    glm::vec3 pos;
-    glm::vec3 color;
+#include "CloudModel.h"
 
-    BasicVertex() = default;
-
-    BasicVertex(const glm::vec3 &pos, const glm::vec3 &color) : pos(pos), color(color) {}
-};
 
 static std::string g_ShaderFolder;
 
@@ -81,147 +76,134 @@ static const std::array<BasicVertex, 34> g_CoordVertices{
     BasicVertex(glm::vec3(-0.1f, 0.0f, 5.6f), glm::vec3(1.0f, 0.0f, 0.0f)),
 };
 
-pcl::PointCloud<pcl::PointNormal>::Ptr bunnyWithNormals()
+
+// pcl::PointCloud<pcl::PointNormal>::Ptr bunnyWithOutNormals()
+// {
+//     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_point(new pcl::PointCloud<pcl::PointXYZ>());
+//     for (const auto &bunnyVertice : bunnyVertices)
+//     {
+//         auto *pt = new pcl::PointXYZ;
+//         pt->x = bunnyVertice.position[0];
+//         pt->y = bunnyVertice.position[1];
+//         pt->z = bunnyVertice.position[2];
+//         cloud_point->push_back(*pt);
+//     }
+//     // Create the normal estimation class, and pass the input dataset to it
+//     pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> normalEstimation;
+//     normalEstimation.setInputCloud(cloud_point);
+//     pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>());
+//     normalEstimation.setSearchMethod(tree);
+//     pcl::PointCloud<pcl::Normal>::Ptr cloud_normals(new pcl::PointCloud<pcl::Normal>);
+//     // Use all neighbors in a sphere of radius 3cm
+//     normalEstimation.setRadiusSearch(0.03);
+//     // Compute the features
+//     normalEstimation.compute(*cloud_normals);
+//     pcl::PointCloud<pcl::PointNormal>::Ptr cloud_point_normals(new pcl::PointCloud<pcl::PointNormal>());
+//     pcl::concatenateFields(*cloud_point, *cloud_normals, *cloud_point_normals);
+//     std::cout << cloud_point_normals->size() << std::endl;
+//     return cloud_point_normals;
+// }
+
+// void show(const pcl::PolygonMesh &mesh)
+// {
+//     // --------------------------------------------
+//     // -----Open 3D viewer and add point cloud-----
+//     // --------------------------------------------
+//     pcl::visualization::PCLVisualizer::Ptr viewer(new pcl::visualization::PCLVisualizer("3D Viewer"));
+//     viewer->setBackgroundColor(0, 0, 0);
+//     viewer->setCameraPosition(0, 0, 0, 0, 0, 0);
+//     viewer->addPolygonMesh(mesh);
+//     viewer->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 1, "sample cloud");
+//     viewer->addCoordinateSystem(1.0);
+//     viewer->initCameraParameters();
+//     while (!viewer->wasStopped())
+//     {
+//         viewer->spinOnce(100);
+//         std::this_thread::sleep_for(std::chrono::milliseconds(100));
+//     }
+// }
+
+// pcl::PointCloud<pcl::Normal>::Ptr compute_normals(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud)
+// {
+//     pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> *ne = new pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal>;
+//     ne->setInputCloud(cloud);
+
+//     // Create an empty kdtree representation, and pass it to the normal estimation object.
+//     // Its content will be filled inside the object, based on the given input dataset (as no other search surface is given).
+//     pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>());
+//     ne->setSearchMethod(tree);
+
+//     // Output datasets
+//     pcl::PointCloud<pcl::Normal>::Ptr cloud_normals(new pcl::PointCloud<pcl::Normal>);
+
+//     // Use all neighbors in a sphere of radius 3cm
+//     ne->setRadiusSearch(0.3);
+
+//     // Compute the features
+//     ne->compute(*cloud_normals);
+//     return cloud_normals;
+// }
+
+enum Buffers
 {
-    pcl::PointCloud<pcl::PointNormal>::Ptr cloud_point_normals(new pcl::PointCloud<pcl::PointNormal>());
-    for (const auto &bunnyVertice : bunnyVertices)
-    {
-        auto *pt = new pcl::PointNormal;
-        pt->x = bunnyVertice.position[0];
-        pt->y = bunnyVertice.position[1];
-        pt->z = bunnyVertice.position[2];
-        pt->normal_x = bunnyVertice.normal[0];
-        pt->normal_y = bunnyVertice.normal[1];
-        pt->normal_z = bunnyVertice.normal[2];
-        cloud_point_normals->push_back(*pt);
-    }
-    return cloud_point_normals;
-}
+    Ray,
+    Coord,
+    BUFFER_COUNT
+};
 
-pcl::PointCloud<pcl::PointNormal>::Ptr bunnyWithOutNormals()
-{
-    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_point(new pcl::PointCloud<pcl::PointXYZ>());
-    for (const auto &bunnyVertice : bunnyVertices)
-    {
-        auto *pt = new pcl::PointXYZ;
-        pt->x = bunnyVertice.position[0];
-        pt->y = bunnyVertice.position[1];
-        pt->z = bunnyVertice.position[2];
-        cloud_point->push_back(*pt);
-    }
-    // Create the normal estimation class, and pass the input dataset to it
-    pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> normalEstimation;
-    normalEstimation.setInputCloud(cloud_point);
-    pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>());
-    normalEstimation.setSearchMethod(tree);
-    pcl::PointCloud<pcl::Normal>::Ptr cloud_normals(new pcl::PointCloud<pcl::Normal>);
-    // Use all neighbors in a sphere of radius 3cm
-    normalEstimation.setRadiusSearch(0.03);
-    // Compute the features
-    normalEstimation.compute(*cloud_normals);
-    pcl::PointCloud<pcl::PointNormal>::Ptr cloud_point_normals(new pcl::PointCloud<pcl::PointNormal>());
-    pcl::concatenateFields(*cloud_point, *cloud_normals, *cloud_point_normals);
-    std::cout << cloud_point_normals->size() << std::endl;
-    return cloud_point_normals;
-}
-
-void show(const pcl::PolygonMesh &mesh)
-{
-    // --------------------------------------------
-    // -----Open 3D viewer and add point cloud-----
-    // --------------------------------------------
-    pcl::visualization::PCLVisualizer::Ptr viewer(new pcl::visualization::PCLVisualizer("3D Viewer"));
-    viewer->setBackgroundColor(0, 0, 0);
-    viewer->setCameraPosition(0, 0, 0, 0, 0, 0);
-    viewer->addPolygonMesh(mesh);
-    viewer->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 1, "sample cloud");
-    viewer->addCoordinateSystem(1.0);
-    viewer->initCameraParameters();
-    while (!viewer->wasStopped())
-    {
-        viewer->spinOnce(100);
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-}
-
-pcl::PointCloud<pcl::Normal>::Ptr compute_normals(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud)
-{
-    pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> *ne = new pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal>;
-    ne->setInputCloud(cloud);
-
-    // Create an empty kdtree representation, and pass it to the normal estimation object.
-    // Its content will be filled inside the object, based on the given input dataset (as no other search surface is given).
-    pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>());
-    ne->setSearchMethod(tree);
-
-    // Output datasets
-    pcl::PointCloud<pcl::Normal>::Ptr cloud_normals(new pcl::PointCloud<pcl::Normal>);
-
-    // Use all neighbors in a sphere of radius 3cm
-    ne->setRadiusSearch(0.3);
-
-    // Compute the features
-    ne->compute(*cloud_normals);
-    return cloud_normals;
-}
 
 int main(int /*argc*/, char ** /*argv*/)
 {
-    std::vector<GLuint> flatIndices;
-    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(new pcl::PointCloud<pcl::PointNormal>());
-
     // Simple caching system for later (we might want to display multiple models during presentation?)
-    std::ifstream indexCache("index_cache.dat", ios::in | ios::binary);
-    if (pcl::io::loadPCDFile<pcl::PointNormal>("surface_cache.pcd", *surfaceCloud) >= 0 && indexCache.is_open())
-    {
-        // Cache exists
-        size_t cacheSize;
-        indexCache.read((char *)&cacheSize, sizeof(size_t));
-        flatIndices.resize(cacheSize);
-        indexCache.read((char *)flatIndices.data(), cacheSize * sizeof(GLuint));
-    }
-    else
-    {
-        pcl::PointCloud<pcl::PointNormal>::Ptr cloud_point_normals;
-        if (false)
-            cloud_point_normals = bunnyWithOutNormals();
-        else
-            cloud_point_normals = bunnyWithNormals();
+    // std::ifstream indexCache("index_cache.dat", std::ios::in | std::ios::binary);
+    // if (false && pcl::io::loadPCDFile<pcl::PointNormal>("surface_cache.pcd", *surfaceCloud) >= 0 && indexCache.is_open())
+    // {
+    //     // Cache exists
+    //     size_t cacheSize;
+    //     indexCache.read((char *)&cacheSize, sizeof(size_t));
+    //     flatIndices.resize(cacheSize);
+    //     indexCache.read((char *)flatIndices.data(), cacheSize * sizeof(GLuint));
+    // }
+    // else
+    // {
+    //     pcl::PointCloud<pcl::PointNormal>::Ptr cloud_point_normals;
+    //     // if (false)
+    //     //     cloud_point_normals = bunnyWithOutNormals();
+    //     // else
+    //     //     cloud_point_normals = bunnyWithNormals();
 
-        pcl::Poisson<pcl::PointNormal> poisson;
-        poisson.setDepth(6); // Was painfully slow with depth of 12
-        poisson.setInputCloud(cloud_point_normals);
+    //     // pcl::Poisson<pcl::PointNormal> poisson;
+    //     // poisson.setDepth(6); // Was painfully slow with depth of 12
+    //     // poisson.setInputCloud(cloud_point_normals);
 
-        // Reconstruction
-        std::vector<pcl::Vertices> outputIndices;
-        poisson.reconstruct(*surfaceCloud, outputIndices);
-        //    pcl::PolygonMesh mesh;
-        //    poisson.reconstruct(mesh)
-        
-        // PCL uses weird memory layout for indices, copy the data
-        // into new vector with flat layout so that it can be used by OpenGL
-        size_t idx = 0;
-        flatIndices.resize(outputIndices.size() * 3);
-        for (size_t i = 0; i < outputIndices.size(); i++)
-        {
-            const auto &indices = outputIndices[i];
-            for (size_t index : indices.vertices)
-                flatIndices[idx++] = index;
-        }
+    //     std::vector<pcl::Vertices> outputIndices;
 
-        // Save cache
-        pcl::io::savePCDFileASCII("surface_cache.pcd", *surfaceCloud);
-        std::ofstream cacheFile("index_cache.dat", ios::out | ios::binary);
-        size_t cacheSize = flatIndices.size();
-        cacheFile.write((char *)&cacheSize, sizeof(size_t));
-        cacheFile.write((char *)flatIndices.data(), cacheSize * sizeof(GLuint));
-        cacheFile.close();
-    }
+    //     // Reconstruction
+    //     pcl::MarchingCubesHoppe<pcl::PointNormal> hoppe;
+    //     hoppe.setInputCloud(cloud_point_normals);
+    //     hoppe.setGridResolution(40, 40, 40);
+    //     hoppe.reconstruct(*surfaceCloud, outputIndices);
+    //     poisson.reconstruct(*surfaceCloud, outputIndices);
 
-    auto &surfacePoints = surfaceCloud->points;
-    std::cout << "Cloud size: " << surfacePoints.size() << std::endl;
-    std::cout << "Triangle count: " << (flatIndices.size() / 3) << std::endl;
+    //     // PCL uses weird memory layout for indices, copy the data
+    //     // into new vector with flat layout so that it can be used by OpenGL
+    //     size_t idx = 0;
+    //     flatIndices.resize(outputIndices.size() * 3);
+    //     for (size_t i = 0; i < outputIndices.size(); i++)
+    //     {
+    //         const auto &indices = outputIndices[i];
+    //         for (size_t index : indices.vertices)
+    //             flatIndices[idx++] = index;
+    //     }
 
+    //     // Save cache
+    //     pcl::io::savePCDFileASCII("surface_cache.pcd", *surfaceCloud);
+    //     std::ofstream cacheFile("index_cache.dat", std::ios::out | std::ios::binary);
+    //     size_t cacheSize = flatIndices.size();
+    //     cacheFile.write((char *)&cacheSize, sizeof(size_t));
+    //     cacheFile.write((char *)flatIndices.data(), cacheSize * sizeof(GLuint));
+    //     cacheFile.close();
+    // }
     // show(mesh);
 
     BaseApp app;
@@ -233,62 +215,59 @@ int main(int /*argc*/, char ** /*argv*/)
 
     g_ShaderFolder = app.getResourceDir() + "Shaders/";
 
-    GLuint vaoCoord, vboCoord;
-    GLuint rayVAO, rayVBO;
-    GLuint modelVAO, modelVBO, modelEBO;
+
+    CloudModel bunnyModel(g_ShaderFolder);
+    
+    // TODO: Move to CloudModel later on
+    // std::vector<GLuint> flatIndices;
+    // pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(new pcl::PointCloud<pcl::PointNormal>());
+    // auto &surfacePoints = surfaceCloud->points;
+    // std::cout << "Cloud size: " << surfacePoints.size() << std::endl;
+    // std::cout << "Triangle count: " << (flatIndices.size() / 3) << std::endl;
+
+    std::array<GLuint, BUFFER_COUNT> VAOs;
+    std::array<GLuint, BUFFER_COUNT> VBOs;
+    std::array<GLuint, BUFFER_COUNT> EBOs;
     ProgramObject wireframeProgram;
-    ProgramObject basicProgram;
 
     auto mainWindow = app.getMainWindow();
 
     bool showErrorPopup = false;
-    bool showDemo = true;
+    bool showDemo = false;
     bool rayCast = false;
 
-    ImVec2 optSize(50, 100);
     ImVec2 buttonSize(120, 20);
 
     char errorBuffer[256];
 
     app.addInitCallback([&]() {
+        glEnable(GL_PROGRAM_POINT_SIZE);
+        glEnable(GL_DEPTH_TEST);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glClearColor(0.2, 0.2, 0.2, 1);
+        // glEnable(GL_ALPHA_TEST);
+        // glAlphaFunc(GL_GREATER,0.0f);
+
         auto wireframeVS = compileShader(GL_VERTEX_SHADER, Loader::text(g_ShaderFolder + "wireframe.vert"));
         auto wireframeFS = compileShader(GL_FRAGMENT_SHADER, Loader::text(g_ShaderFolder + "wireframe.frag"));
         wireframeProgram = createProgram(wireframeVS, wireframeFS);
 
-        auto basicVS = compileShader(GL_VERTEX_SHADER, Loader::text(g_ShaderFolder + "primitive.vert"));
-        auto basicFS = compileShader(GL_FRAGMENT_SHADER, Loader::text(g_ShaderFolder + "primitive.frag"));
-        basicProgram = createProgram(basicVS, basicFS);
+        // Create buffers
+        glCreateVertexArrays(VAOs.size(), VAOs.data());
+        glCreateBuffers(VBOs.size(), VBOs.data());
+        glCreateBuffers(EBOs.size(), EBOs.data());
 
-        // Buffers for ray cast visualization
-        glCreateVertexArrays(1, &rayVAO);
-        glCreateBuffers(1, &rayVBO);
-        glNamedBufferData(rayVBO, sizeof(glm::vec3) * 2 + 4, 0, GL_DYNAMIC_DRAW);
-        glVertexArrayVertexBuffer(rayVAO, 0, rayVBO, offsetof(BasicVertex, pos), sizeof(glm::vec3));
-        glEnableVertexArrayAttrib(rayVAO, 0);
+        glNamedBufferData(VBOs[Ray], sizeof(glm::vec3) * 2 + 4, 0, GL_DYNAMIC_DRAW);
+        glVertexArrayVertexBuffer(VAOs[Ray], 0, VBOs[Ray], 0, sizeof(glm::vec3));
+        glEnableVertexArrayAttrib(VAOs[Ray], 0);
 
         // Buffers for coordinate system arrows
-        glCreateVertexArrays(1, &vaoCoord);
-        glCreateBuffers(1, &vboCoord);
-        glNamedBufferData(vboCoord, sizeof(BasicVertex) * g_CoordVertices.size() + 4, g_CoordVertices.data(), GL_STATIC_DRAW);
-        glVertexArrayVertexBuffer(vaoCoord, 0, vboCoord, offsetof(BasicVertex, pos), sizeof(BasicVertex));
-        glVertexArrayVertexBuffer(vaoCoord, 1, vboCoord, offsetof(BasicVertex, color), sizeof(BasicVertex));
-        glEnableVertexArrayAttrib(vaoCoord, 0);
-        glEnableVertexArrayAttrib(vaoCoord, 1);
-
-
-        // Buffer model vertex and index data and bind buffers to VAO
-        glCreateVertexArrays(1, &modelVAO);
-        glCreateBuffers(1, &modelVBO);
-        glCreateBuffers(1, &modelEBO);
-        glNamedBufferData(modelVBO, sizeof(pcl::PointNormal) * surfacePoints.size() + 4, surfacePoints.data(), GL_STATIC_DRAW);
-        glNamedBufferData(modelEBO, sizeof(GLuint) * flatIndices.size(), flatIndices.data(), GL_STATIC_DRAW);
-        glVertexArrayVertexBuffer(modelVAO, 0, modelVBO, offsetof(pcl::PointNormal, data), sizeof(pcl::PointNormal));
-        glVertexArrayVertexBuffer(modelVAO, 1, modelVBO, offsetof(pcl::PointNormal, normal), sizeof(pcl::PointNormal));
-        // glVertexArrayVertexBuffer(modelVAO, 2, modelVBO, offsetof(pcl::PointNormal, curvature), sizeof(pcl::PointNormal));
-        glEnableVertexArrayAttrib(modelVAO, 0);
-        glEnableVertexArrayAttrib(modelVAO, 1);
-        // glEnableVertexArrayAttrib(modelVAO, 2);
-        glVertexArrayElementBuffer(modelVAO, modelEBO);
+        glNamedBufferData(VBOs[Coord], sizeof(BasicVertex) * g_CoordVertices.size() + 4, g_CoordVertices.data(), GL_STATIC_DRAW);
+        glVertexArrayVertexBuffer(VAOs[Coord], 0, VBOs[Coord], offsetof(BasicVertex, pos), sizeof(BasicVertex));
+        glVertexArrayVertexBuffer(VAOs[Coord], 1, VBOs[Coord], offsetof(BasicVertex, color), sizeof(BasicVertex));
+        glEnableVertexArrayAttrib(VAOs[Coord], 0);
+        glEnableVertexArrayAttrib(VAOs[Coord], 1);
 
         ImGui::GetIO().WantTextInput = true;
         ImGui::GetIO().WantCaptureKeyboard = true;
@@ -297,49 +276,75 @@ int main(int /*argc*/, char ** /*argv*/)
     glm::vec3 color(0.0, 1.0, 0.0);
     glm::vec3 wireframeColor(1.0, 0.0, 0.0);
 
+    app.addResizeCallback([&](int width, int height) {
+        cam.setAspect((float)width / height);
+        glViewport(0, 0, width, height);
+    });
+
     app.addDrawCallback([&]() {
-        int w = mainWindow->getWidth();
-        int h = mainWindow->getHeight();
-        glViewport(0, 0, w, h);
-        glClearColor(0.2, 0.2, 0.2, 1);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        glEnable(GL_DEPTH_TEST);
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
         // Draw coordinate arrows
         glm::mat4 pvm = cam.getProjection() * cam.getView();
         wireframeProgram.use();
         wireframeProgram.setMatrix4fv("pvm", glm::value_ptr(pvm));
-        glBindVertexArray(vaoCoord);
+        glBindVertexArray(VAOs[Coord]);
         glLineWidth(3.0f);
         glDrawArrays(GL_LINES, 0, g_CoordVertices.size());
         glLineWidth(1.0f);
 
         if (rayCast)
         {
-            glBindVertexArray(rayVAO);
+            glBindVertexArray(VAOs[Ray]);
             glDrawArrays(GL_LINES, 0, 2);
         }
 
-        // Draw model
-        basicProgram.use();
-        basicProgram.set3fv("primitiveColor", glm::value_ptr(color));
-        basicProgram.set1ui("textureType", 0);
-        basicProgram.setMatrix4fv("pvm", glm::value_ptr(pvm));
-        glBindVertexArray(modelVAO);
-        glDrawElements(GL_TRIANGLES, flatIndices.size(), GL_UNSIGNED_INT, nullptr);
-
-        // Draw outlines of model triangles, it looks weird without illumination model otherwise
-        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-        basicProgram.set3fv("primitiveColor", glm::value_ptr(wireframeColor));
-        glDrawElements(GL_TRIANGLES, flatIndices.size(), GL_UNSIGNED_INT, nullptr);
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        bunnyModel.Draw(pvm, color);
 
         // GUI
         label("FPS: " + std::to_string(ImGui::GetIO().Framerate));
-        ImGui::Begin("Options", nullptr, optSize);
-        ImGui::Text("TODO GUI");
+        ImGui::Begin("Options", nullptr, ImVec2(300, 500));
+        ImGui::Checkbox("Show mesh", &bunnyModel.m_ShowMesh);
+        ImGui::Text("Grid resolution");
+
+        // Cannot merge due to short curcuit || evaluation. Causes flickering
+        // when moving the slider because the render command is skiped
+        if (ImGui::SliderInt("X", &bunnyModel.m_GridSizeX, 5, 100))
+        {
+            bunnyModel.m_InvalidatedGrid = true;
+        }
+
+        if (ImGui::SliderInt("Y", &bunnyModel.m_GridSizeY, 5, 100))
+        {
+            bunnyModel.m_InvalidatedGrid = true;
+        }
+
+        if (ImGui::SliderInt("Z", &bunnyModel.m_GridSizeZ, 5, 100))
+        {
+            bunnyModel.m_InvalidatedGrid = true;
+        }
+
+        if (ImGui::Button("Regenerate grid"))
+        {
+            bunnyModel.RegenerateGrid();
+        }
+
+        if (ImGui::Button("Reconstruct"))
+        {
+            bunnyModel.Reconstruct();
+        }
+
+        ImGui::Text("Debug Options");
+        ImGui::Checkbox("Show grid", &bunnyModel.m_ShowGrid);
+        ImGui::Checkbox("Show input PC", &bunnyModel.m_ShowInputPC);
+        if (bunnyModel.m_ShowInputPC)
+        {
+            ImGui::Checkbox("Show normals", &bunnyModel.m_ShowNormals);
+        }
+
+        ImGui::Checkbox("Show connections", &bunnyModel.m_ShowConnections);
+        ImGui::SliderInt("Connection index", &bunnyModel.m_ConnectionIdx, 0, bunnyModel.GetCornerCount() - 1);
+
         ImGui::End();
 
         if (showErrorPopup)
@@ -397,11 +402,11 @@ int main(int /*argc*/, char ** /*argv*/)
         return std::make_pair(eye, rayDir);
     };
 
-    app.addMousePressCallback([&](uint8_t button, int x, int y) {
+    app.addMousePressCallback([&](uint8_t button, int, int) {
         if (button == 3)
         {
             std::array<glm::vec3, 2> rayVertices{rayOrigin, rayOrigin + (rayDir * 100.0f)};
-            glNamedBufferSubData(rayVBO, 0, sizeof(glm::vec3) * 2, rayVertices.data());
+            glNamedBufferSubData(VBOs[Ray], 0, sizeof(glm::vec3) * 2, rayVertices.data());
             rayCast = true;
         }
     });

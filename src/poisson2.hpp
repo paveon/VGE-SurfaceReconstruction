@@ -46,11 +46,11 @@
 #include <pcl/common/vector_average.h>
 #include <pcl/Vertices.h>
 
-#include <pcl/surface/3rdparty/poisson4/octree_poisson.h>
+#include "octree_poisson2.h"
 #include <pcl/surface/3rdparty/poisson4/sparse_matrix.h>
 #include <pcl/surface/3rdparty/poisson4/function_data.h>
 #include <pcl/surface/3rdparty/poisson4/ppolynomial.h>
-#include <pcl/surface/3rdparty/poisson4/multi_grid_octree_data.h>
+#include "multi_grid_octree_data2.h"
 #include <pcl/surface/3rdparty/poisson4/geometry.h>
 
 #define MEMORY_ALLOCATOR_BLOCK_SIZE 1<<12
@@ -82,6 +82,7 @@ pcl::Poisson<PointNT>::Poisson ()
   , show_residual_ (false)
   , min_iterations_ (8)
   , solver_accuracy_ (1e-3f)
+  , cubes_ (nullptr)
 {
 }
 
@@ -152,7 +153,6 @@ pcl::Poisson<PointNT>::execute (poisson::CoredVectorMeshData &mesh,
 template <typename PointNT> void
 pcl::Poisson<PointNT>::performReconstruction (PolygonMesh &output)
 {
-   std::cout << "TEST OUTPUT1" << std::endl;
   poisson::CoredVectorMeshData mesh;
   poisson::Point3D<float> center;
   float scale = 1.0f;
@@ -232,12 +232,13 @@ pcl::Poisson<PointNT>::performReconstruction (PolygonMesh &output)
 //////////////////////////////////////////////////////////////////////////////////////////////
 template <typename PointNT> void
 pcl::Poisson<PointNT>::performReconstruction (pcl::PointCloud<PointNT> &points,
-                                              std::vector<pcl::Vertices> &polygons)
+                                              std::vector<pcl::Vertices> &polygons,
+                                              std::vector<pcl::Cube<PointNT>> &cubes)
 {
-   std::cout << "TEST OUTPUT2" << std::endl;
   poisson::CoredVectorMeshData mesh;
   poisson::Point3D<float> center;
   float scale = 1.0f;
+  cubes_ = &cubes;
 
   switch (degree_)
   {

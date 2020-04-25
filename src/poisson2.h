@@ -90,7 +90,8 @@ namespace pcl
         */
       void
       performReconstruction (pcl::PointCloud<PointNT> &points,
-                             std::vector<pcl::Vertices> &polygons);
+                             std::vector<pcl::Vertices> &polygons,
+                             std::vector<pcl::Cube<PointNT>> &cubes);
 
       /** \brief Set the maximum depth of the tree that will be used for surface reconstruction.
         * \note Running at depth d corresponds to solving on a voxel grid whose resolution is no larger than
@@ -243,6 +244,7 @@ namespace pcl
       bool show_residual_;
       int min_iterations_;
       float solver_accuracy_;
+      std::vector<pcl::Cube<PointNT>>* cubes_;
 
       template<int Degree> void
       execute (poisson::CoredVectorMeshData &mesh,

@@ -41,6 +41,8 @@
 #define PCL_SURFACE_RECONSTRUCTION_IMPL_H_
 #include <pcl/search/pcl_search.h>
 
+#include <array>
+
 //////////////////////////////////////////////////////////////////////////////////////////////
 template <typename PointInT> void
 pcl::SurfaceReconstruction<PointInT>::reconstruct (pcl::PolygonMesh &output)
@@ -81,10 +83,12 @@ pcl::SurfaceReconstruction<PointInT>::reconstruct (pcl::PolygonMesh &output)
   deinitCompute ();
 }
 
+
 //////////////////////////////////////////////////////////////////////////////////////////////
 template <typename PointInT> void
 pcl::SurfaceReconstruction<PointInT>::reconstruct (pcl::PointCloud<PointInT> &points,
-                                                   std::vector<pcl::Vertices> &polygons)
+                                                   std::vector<pcl::Vertices> &polygons,
+                                                   std::vector<pcl::Cube<PointInT>> &cubes)
 {
   // Copy the header
   points.header = input_->header;
@@ -116,7 +120,7 @@ pcl::SurfaceReconstruction<PointInT>::reconstruct (pcl::PointCloud<PointInT> &po
   polygons.clear ();
   polygons.reserve (2 * indices_->size ()); /// NOTE: usually the number of triangles is around twice the number of vertices
   // Perform the actual surface reconstruction
-  performReconstruction (points, polygons);
+  performReconstruction (points, polygons, cubes);
 
   deinitCompute ();
 }

@@ -102,6 +102,13 @@ namespace pcl
       getClassName () const { return (""); }
   };
 
+
+  template<typename T>
+  class Cube {
+    std::array<T, 4> vertices;
+  };
+
+
   /** \brief SurfaceReconstruction represents a base surface reconstruction
     * class. All \b surface reconstruction methods take in a point cloud and
     * generate a new surface from it, by either re-sampling the data or
@@ -150,7 +157,8 @@ namespace pcl
         */
       virtual void 
       reconstruct (pcl::PointCloud<PointInT> &points,
-                   std::vector<pcl::Vertices> &polygons);
+                   std::vector<pcl::Vertices> &polygons,
+                   std::vector<Cube<PointInT>> &cubes);
 
     protected:
       /** \brief A flag specifying whether or not the derived reconstruction
@@ -169,7 +177,8 @@ namespace pcl
         */
       virtual void 
       performReconstruction (pcl::PointCloud<PointInT> &points, 
-                             std::vector<pcl::Vertices> &polygons) = 0;
+                             std::vector<pcl::Vertices> &polygons,
+                             std::vector<pcl::Cube<PointInT>> &cubes) = 0;
   };
 
   /** \brief MeshConstruction represents a base surface reconstruction
