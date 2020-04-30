@@ -3169,12 +3169,12 @@ const unsigned short bunny[2092][3] = {
 	{ 1046, 1034, 1047 }
 };
 
-struct BunnyVertex const pointVertices[1] = {
-	{{ 0.0, 0.0, 0.0 }, { 0.0, 1.0, 0.0 }}
-};
-
-const unsigned short point[1] = {
-	0 
-};
+//struct BunnyVertex const pointVertices[1] = {
+//	{{ 0.0, 0.0, 0.0 }, { 0.0, 1.0, 0.0 }}
+//};
+//
+//const unsigned short point[1] = {
+//	0
+//};
 
 #endif

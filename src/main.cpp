@@ -1,109 +1,71 @@
 #define SDL_MAIN_HANDLED
 
 #include <iostream>
-#include <thread>
-#include <chrono>
+//#include <chrono>
 #include <tuple>
 
-#include <pcl/common/common.h>
-#include <pcl/common/vector_average.h>
-#include <pcl/Vertices.h>
-
-//#include <pcl/surface/3rdparty/poisson4/octree_poisson.h>
-//#include <pcl/surface/3rdparty/poisson4/sparse_matrix.h>
-//#include <pcl/surface/3rdparty/poisson4/function_data.h>
-//#include <pcl/surface/3rdparty/poisson4/ppolynomial.h>
-//#include <pcl/surface/3rdparty/poisson4/multi_grid_octree_data.h>
-//#include <pcl/surface/3rdparty/poisson4/geometry.h>
-
-#include <pcl/point_types.h>
+// #include <pcl/common/vector_average.h>
+// #include <pcl/Vertices.h>
 // #include <pcl/common/common_headers.h>
 // #include <pcl/features/normal_3d.h>
-#include <pcl/io/pcd_io.h>
+
 // #include <pcl/visualization/pcl_visualizer.h>
 // #include <pcl/features/normal_3d.h>
 // #include <pcl/search/impl/search.hpp>
-#include <pcl/search/kdtree.h>
 
-// #include <pcl/surface/poisson.h>
-// #include <pcl/surface/marching_cubes_hoppe.h>
+#include <pcl/common/common.h>
+#include <pcl/point_types.h>
+#include <pcl/io/pcd_io.h>
 
-#include <glm/gtx/string_cast.hpp>
 #include <BaseApp.h>
 #include <Loader.h>
 #include <Gui.h>
-#include "bunny.h"
+//#include <glm/gtx/string_cast.hpp>
 
 #include "CloudModel.h"
+#include "ExampleClouds.h"
 
 
 static std::string g_ShaderFolder;
 
-static const std::array<BasicVertex, 34> g_CoordVertices{
-    BasicVertex(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
-    BasicVertex(glm::vec3(5.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
-    BasicVertex(glm::vec3(5.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
-    BasicVertex(glm::vec3(4.3f, 0.0f, 0.3f), glm::vec3(0.0f, 0.0f, 1.0f)),
-    BasicVertex(glm::vec3(5.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
-    BasicVertex(glm::vec3(4.3f, 0.0f, -0.3f), glm::vec3(0.0f, 0.0f, 1.0f)),
-    BasicVertex(glm::vec3(5.5f, 0.0f, 0.25f), glm::vec3(0.0f, 0.0f, 1.0f)),
-    BasicVertex(glm::vec3(6.0f, 0.0f, -0.25f), glm::vec3(0.0f, 0.0f, 1.0f)),
-    BasicVertex(glm::vec3(6.0f, 0.0f, 0.25f), glm::vec3(0.0f, 0.0f, 1.0f)),
-    BasicVertex(glm::vec3(5.5f, 0.0f, -0.25f), glm::vec3(0.0f, 0.0f, 1.0f)),
+static const std::array<VertexRGB, 34> g_CoordVertices{
+        VertexRGB(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
+        VertexRGB(glm::vec3(5.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
+        VertexRGB(glm::vec3(5.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
+        VertexRGB(glm::vec3(4.3f, 0.0f, 0.3f), glm::vec3(0.0f, 0.0f, 1.0f)),
+        VertexRGB(glm::vec3(5.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
+        VertexRGB(glm::vec3(4.3f, 0.0f, -0.3f), glm::vec3(0.0f, 0.0f, 1.0f)),
+        VertexRGB(glm::vec3(5.5f, 0.0f, 0.25f), glm::vec3(0.0f, 0.0f, 1.0f)),
+        VertexRGB(glm::vec3(6.0f, 0.0f, -0.25f), glm::vec3(0.0f, 0.0f, 1.0f)),
+        VertexRGB(glm::vec3(6.0f, 0.0f, 0.25f), glm::vec3(0.0f, 0.0f, 1.0f)),
+        VertexRGB(glm::vec3(5.5f, 0.0f, -0.25f), glm::vec3(0.0f, 0.0f, 1.0f)),
 
-    BasicVertex(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
-    BasicVertex(glm::vec3(0.0f, 5.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
-    BasicVertex(glm::vec3(0.0f, 5.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
-    BasicVertex(glm::vec3(0.0f, 4.3f, 0.3f), glm::vec3(0.0f, 1.0f, 0.0f)),
-    BasicVertex(glm::vec3(0.0f, 5.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
-    BasicVertex(glm::vec3(0.0f, 4.3f, -0.3f), glm::vec3(0.0f, 1.0f, 0.0f)),
-    BasicVertex(glm::vec3(0.0f, 5.5f, -0.15f), glm::vec3(0.0f, 1.0f, 0.0f)),
-    BasicVertex(glm::vec3(0.0f, 6.0f, 0.15f), glm::vec3(0.0f, 1.0f, 0.0f)),
-    BasicVertex(glm::vec3(0.0f, 5.75f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
-    BasicVertex(glm::vec3(0.0f, 6.0f, -0.15f), glm::vec3(0.0f, 1.0f, 0.0f)),
+        VertexRGB(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
+        VertexRGB(glm::vec3(0.0f, 5.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
+        VertexRGB(glm::vec3(0.0f, 5.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
+        VertexRGB(glm::vec3(0.0f, 4.3f, 0.3f), glm::vec3(0.0f, 1.0f, 0.0f)),
+        VertexRGB(glm::vec3(0.0f, 5.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
+        VertexRGB(glm::vec3(0.0f, 4.3f, -0.3f), glm::vec3(0.0f, 1.0f, 0.0f)),
+        VertexRGB(glm::vec3(0.0f, 5.5f, -0.15f), glm::vec3(0.0f, 1.0f, 0.0f)),
+        VertexRGB(glm::vec3(0.0f, 6.0f, 0.15f), glm::vec3(0.0f, 1.0f, 0.0f)),
+        VertexRGB(glm::vec3(0.0f, 5.75f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f)),
+        VertexRGB(glm::vec3(0.0f, 6.0f, -0.15f), glm::vec3(0.0f, 1.0f, 0.0f)),
 
-    BasicVertex(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f)),
-    BasicVertex(glm::vec3(0.0f, 0.0f, 5.0f), glm::vec3(1.0f, 0.0f, 0.0f)),
-    BasicVertex(glm::vec3(0.0f, 0.0f, 5.0f), glm::vec3(1.0f, 0.0f, 0.0f)),
-    BasicVertex(glm::vec3(0.3f, 0.0f, 4.3f), glm::vec3(1.0f, 0.0f, 0.0f)),
-    BasicVertex(glm::vec3(0.0f, 0.0f, 5.0f), glm::vec3(1.0f, 0.0f, 0.0f)),
-    BasicVertex(glm::vec3(-0.3f, 0.0f, 4.3f), glm::vec3(1.0f, 0.0f, 0.0f)),
+        VertexRGB(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f)),
+        VertexRGB(glm::vec3(0.0f, 0.0f, 5.0f), glm::vec3(1.0f, 0.0f, 0.0f)),
+        VertexRGB(glm::vec3(0.0f, 0.0f, 5.0f), glm::vec3(1.0f, 0.0f, 0.0f)),
+        VertexRGB(glm::vec3(0.3f, 0.0f, 4.3f), glm::vec3(1.0f, 0.0f, 0.0f)),
+        VertexRGB(glm::vec3(0.0f, 0.0f, 5.0f), glm::vec3(1.0f, 0.0f, 0.0f)),
+        VertexRGB(glm::vec3(-0.3f, 0.0f, 4.3f), glm::vec3(1.0f, 0.0f, 0.0f)),
 
-    BasicVertex(glm::vec3(0.15f, 0.0f, 5.6f), glm::vec3(1.0f, 0.0f, 0.0f)),
-    BasicVertex(glm::vec3(-0.15f, 0.0f, 5.9f), glm::vec3(1.0f, 0.0f, 0.0f)),
-    BasicVertex(glm::vec3(-0.15f, 0.0f, 5.9f), glm::vec3(1.0f, 0.0f, 0.0f)),
-    BasicVertex(glm::vec3(0.1f, 0.0f, 5.9f), glm::vec3(1.0f, 0.0f, 0.0f)),
-    BasicVertex(glm::vec3(0.15f, 0.0f, 5.6f), glm::vec3(1.0f, 0.0f, 0.0f)),
-    BasicVertex(glm::vec3(-0.1f, 0.0f, 5.6f), glm::vec3(1.0f, 0.0f, 0.0f)),
+        VertexRGB(glm::vec3(0.15f, 0.0f, 5.6f), glm::vec3(1.0f, 0.0f, 0.0f)),
+        VertexRGB(glm::vec3(-0.15f, 0.0f, 5.9f), glm::vec3(1.0f, 0.0f, 0.0f)),
+        VertexRGB(glm::vec3(-0.15f, 0.0f, 5.9f), glm::vec3(1.0f, 0.0f, 0.0f)),
+        VertexRGB(glm::vec3(0.1f, 0.0f, 5.9f), glm::vec3(1.0f, 0.0f, 0.0f)),
+        VertexRGB(glm::vec3(0.15f, 0.0f, 5.6f), glm::vec3(1.0f, 0.0f, 0.0f)),
+        VertexRGB(glm::vec3(-0.1f, 0.0f, 5.6f), glm::vec3(1.0f, 0.0f, 0.0f)),
 };
 
-
-// pcl::PointCloud<pcl::PointNormal>::Ptr bunnyWithOutNormals()
-// {
-//     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_point(new pcl::PointCloud<pcl::PointXYZ>());
-//     for (const auto &bunnyVertice : bunnyVertices)
-//     {
-//         auto *pt = new pcl::PointXYZ;
-//         pt->x = bunnyVertice.position[0];
-//         pt->y = bunnyVertice.position[1];
-//         pt->z = bunnyVertice.position[2];
-//         cloud_point->push_back(*pt);
-//     }
-//     // Create the normal estimation class, and pass the input dataset to it
-//     pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> normalEstimation;
-//     normalEstimation.setInputCloud(cloud_point);
-//     pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>());
-//     normalEstimation.setSearchMethod(tree);
-//     pcl::PointCloud<pcl::Normal>::Ptr cloud_normals(new pcl::PointCloud<pcl::Normal>);
-//     // Use all neighbors in a sphere of radius 3cm
-//     normalEstimation.setRadiusSearch(0.03);
-//     // Compute the features
-//     normalEstimation.compute(*cloud_normals);
-//     pcl::PointCloud<pcl::PointNormal>::Ptr cloud_point_normals(new pcl::PointCloud<pcl::PointNormal>());
-//     pcl::concatenateFields(*cloud_point, *cloud_normals, *cloud_point_normals);
-//     std::cout << cloud_point_normals->size() << std::endl;
-//     return cloud_point_normals;
-// }
 
 // void show(const pcl::PolygonMesh &mesh)
 // {
@@ -216,8 +178,10 @@ int main(int /*argc*/, char ** /*argv*/)
 
     g_ShaderFolder = app.getResourceDir() + "Shaders/";
 
-
-    CloudModel bunnyModel(g_ShaderFolder);
+    std::array<CloudModel, 2> models{
+            CloudModel(bunnyCloud(), g_ShaderFolder),
+            CloudModel(sphereCloud(0.5f), g_ShaderFolder)
+    };
 
     // TODO: Move to CloudModel later on
     // std::vector<GLuint> flatIndices;
@@ -265,13 +229,14 @@ int main(int /*argc*/, char ** /*argv*/)
         glVertexArrayVertexBuffer(VAOs[Ray], 0, VBOs[Ray], 0, sizeof(glm::vec3));
 
         // Buffers for coordinate system arrows
-        glNamedBufferData(VBOs[Coord], sizeof(BasicVertex) * g_CoordVertices.size(), g_CoordVertices.data(), GL_STATIC_DRAW);
+        glNamedBufferData(VBOs[Coord], sizeof(VertexRGB) * g_CoordVertices.size(), g_CoordVertices.data(),
+                          GL_STATIC_DRAW);
         glEnableVertexArrayAttrib(VAOs[Coord], 0);
         glEnableVertexArrayAttrib(VAOs[Coord], 1);
-        glVertexArrayAttribFormat(VAOs[Coord], 0, 3, GL_FLOAT, GL_FALSE, offsetof(BasicVertex, pos));
-        glVertexArrayAttribFormat(VAOs[Coord], 1, 3, GL_FLOAT, GL_FALSE, offsetof(BasicVertex, color));
-        glVertexArrayVertexBuffer(VAOs[Coord], 0, VBOs[Coord], 0, sizeof(BasicVertex));
-        glVertexArrayVertexBuffer(VAOs[Coord], 1, VBOs[Coord], 0, sizeof(BasicVertex));
+        glVertexArrayAttribFormat(VAOs[Coord], 0, 3, GL_FLOAT, GL_FALSE, offsetof(VertexRGB, pos));
+        glVertexArrayAttribFormat(VAOs[Coord], 1, 3, GL_FLOAT, GL_FALSE, offsetof(VertexRGB, color));
+        glVertexArrayVertexBuffer(VAOs[Coord], 0, VBOs[Coord], 0, sizeof(VertexRGB));
+        glVertexArrayVertexBuffer(VAOs[Coord], 1, VBOs[Coord], 0, sizeof(VertexRGB));
 
         ImGui::GetIO().WantTextInput = true;
         ImGui::GetIO().WantCaptureKeyboard = true;
@@ -284,6 +249,12 @@ int main(int /*argc*/, char ** /*argv*/)
         cam.setAspect((float)width / (float)height);
         glViewport(0, 0, width, height);
     });
+
+    int currentModel = 0;
+    std::array<const char*, 2> modelNames{
+            "Bunny",
+            "Sphere"
+    };
 
     app.addDrawCallback([&]() {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -303,51 +274,54 @@ int main(int /*argc*/, char ** /*argv*/)
             glDrawArrays(GL_LINES, 0, 2);
         }
 
-        bunnyModel.Draw(pvm, color);
+        models[currentModel].Draw(pvm, color);
 
         // GUI
         label("FPS: " + std::to_string(ImGui::GetIO().Framerate));
         ImGui::Begin("Options", nullptr, ImVec2(300, 500));
-        ImGui::Checkbox("Show mesh", &bunnyModel.m_ShowMesh);
+
+        ImGui::Combo("Model", &currentModel, modelNames.data(), modelNames.size());
+
         ImGui::Text("Grid resolution");
 
-        // Cannot merge due to short curcuit || evaluation. Causes flickering
-        // when moving the slider because the render command is skiped
-        if (ImGui::SliderInt("X", &bunnyModel.m_GridSizeX, 5, 100))
+        // Cannot merge due to short circuit || evaluation. Causes flickering
+        // when moving the slider because the render command is skipped
+        if (ImGui::SliderInt("X", &models[currentModel].m_GridSizeX, 5, 100))
         {
-            bunnyModel.m_InvalidatedGrid = true;
+            models[currentModel].m_InvalidatedGrid = true;
         }
 
-        if (ImGui::SliderInt("Y", &bunnyModel.m_GridSizeY, 5, 100))
+        if (ImGui::SliderInt("Y", &models[currentModel].m_GridSizeY, 5, 100))
         {
-            bunnyModel.m_InvalidatedGrid = true;
+            models[currentModel].m_InvalidatedGrid = true;
         }
 
-        if (ImGui::SliderInt("Z", &bunnyModel.m_GridSizeZ, 5, 100))
+        if (ImGui::SliderInt("Z", &models[currentModel].m_GridSizeZ, 5, 100))
         {
-            bunnyModel.m_InvalidatedGrid = true;
+            models[currentModel].m_InvalidatedGrid = true;
         }
 
         if (ImGui::Button("Regenerate grid"))
         {
-            bunnyModel.RegenerateGrid();
+            models[currentModel].RegenerateGrid();
         }
 
         if (ImGui::Button("Reconstruct"))
         {
-            bunnyModel.Reconstruct();
+            models[currentModel].Reconstruct();
         }
 
         ImGui::Text("Debug Options");
-        ImGui::Checkbox("Show grid", &bunnyModel.m_ShowGrid);
-        ImGui::Checkbox("Show input PC", &bunnyModel.m_ShowInputPC);
-        if (bunnyModel.m_ShowInputPC)
+        ImGui::Checkbox("Show mesh", &models[currentModel].m_ShowMesh);
+        ImGui::Checkbox("Show grid", &models[currentModel].m_ShowGrid);
+        ImGui::Checkbox("Show input PC", &models[currentModel].m_ShowInputPC);
+        if (models[currentModel].m_ShowInputPC)
         {
-            ImGui::Checkbox("Show normals", &bunnyModel.m_ShowNormals);
+            ImGui::Checkbox("Show normals", &models[currentModel].m_ShowNormals);
         }
 
-        ImGui::Checkbox("Show connections", &bunnyModel.m_ShowConnections);
-        ImGui::SliderInt("Connection index", &bunnyModel.m_ConnectionIdx, 0, bunnyModel.GetCornerCount() - 1);
+        ImGui::Checkbox("Show connections", &models[currentModel].m_ShowConnections);
+        ImGui::SliderInt("Connection index", &models[currentModel].m_ConnectionIdx, 0, models[currentModel].GetCornerCount() - 1);
 
         ImGui::End();
 

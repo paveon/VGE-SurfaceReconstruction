@@ -10,45 +10,63 @@
 #include <BaseApp.h>
 #include <Loader.h>
 #include <Gui.h>
-#include "bunny.h"
 
+struct VertexRGB {
+    glm::vec3 pos = glm::vec3(0.0f);
+    glm::vec3 color = glm::vec3(0.0f);
 
-struct BasicVertex
-{
-    glm::vec3 pos;
-    glm::vec3 color;
+    VertexRGB() = default;
 
-    BasicVertex() = default;
+    explicit VertexRGB(const glm::vec3 &pos, const glm::vec3 &color = glm::vec3(0.0f)) : pos(pos), color(color) {}
+};
 
-    BasicVertex(const glm::vec3 &pos, const glm::vec3 &color) : pos(pos), color(color) {}
+struct VertexNormal {
+    glm::vec3 pos = glm::vec3(0.0f);
+    glm::vec3 normal = glm::vec3(0.0f);
+
+    VertexNormal() = default;
+
+    explicit VertexNormal(const glm::vec3 &pos, const glm::vec3 &normal = glm::vec3(0.0f)) : pos(pos), normal(normal) {}
+};
+
+struct VertexRGBNormal {
+    glm::vec3 pos = glm::vec3(0.0f);
+    glm::vec3 color = glm::vec3(0.0f);
+    glm::vec3 normal = glm::vec3(0.0f);
+
+    VertexRGBNormal() = default;
+
+    explicit VertexRGBNormal(const glm::vec3 &pos, const glm::vec3 &color = glm::vec3(0.0f),
+                             const glm::vec3 &normal = glm::vec3(0.0f)) : pos(pos), color(color), normal(normal) {}
 };
 
 
-class CloudModel
-{
+class CloudModel {
     pcl::PointCloud<pcl::PointNormal>::Ptr m_Cloud;
     pcl::search::KdTree<pcl::PointNormal>::Ptr m_Tree;
     Eigen::Vector4f m_MinBB;
     Eigen::Vector4f m_MaxBB;
     Eigen::Vector4f m_SizeBB;
     std::vector<pcl::PointNormal> m_Connections;
-    std::vector<BasicVertex> m_CubeCorners;
+    std::vector<VertexRGB> m_CubeCorners;
+    std::vector<std::tuple<size_t, size_t, size_t>> m_CornersXYZ;
     std::vector<float> m_IsoValues;
 
     std::vector<glm::vec3> m_MeshVertices;
+    std::vector<glm::vec3> m_CloudNormals;
 
-    enum Buffers
-    {
+    enum Buffers {
         Model,
         Corners,
         InputPC,
+        InputPCNormals,
         Connections,
         BUFFER_COUNT
     };
 
-    std::array<GLuint, BUFFER_COUNT> m_VAOs;
-    std::array<GLuint, BUFFER_COUNT> m_VBOs;
-    std::array<GLuint, BUFFER_COUNT> m_EBOs;
+    std::array<GLuint, BUFFER_COUNT> m_VAOs = {};
+    std::array<GLuint, BUFFER_COUNT> m_VBOs = {};
+    std::array<GLuint, BUFFER_COUNT> m_EBOs = {};
 
     static ProgramObject s_ShaderProgram;
     static ProgramObject s_GeometryProgram;
@@ -68,7 +86,7 @@ public:
 
     size_t GetCornerCount() { return m_CubeCorners.size(); }
 
-    CloudModel(const std::string& shaderDir);
+    CloudModel(pcl::PointCloud<pcl::PointNormal>::Ptr cloud, const std::string &shaderDir);
 
     void Draw(glm::mat4 pv, glm::vec3 color);
 
