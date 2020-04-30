@@ -32,7 +32,7 @@ BaseApp::~BaseApp() {
 
 
 void BaseApp::initGL() {
-	int version = 450;
+	int version = 460;
 	while (version >= options.minimumVersion && mainContext == nullptr) {
 		mainContext = mainWindow->createContext("context", version, options.profile, options.flags, options.vsync);
 		version -= 10;

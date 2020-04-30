@@ -28,6 +28,7 @@
 // #include <pcl/surface/poisson.h>
 // #include <pcl/surface/marching_cubes_hoppe.h>
 
+#include <glm/gtx/string_cast.hpp>
 #include <BaseApp.h>
 #include <Loader.h>
 #include <Gui.h>
@@ -217,7 +218,7 @@ int main(int /*argc*/, char ** /*argv*/)
 
 
     CloudModel bunnyModel(g_ShaderFolder);
-    
+
     // TODO: Move to CloudModel later on
     // std::vector<GLuint> flatIndices;
     // pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(new pcl::PointCloud<pcl::PointNormal>());
@@ -225,9 +226,9 @@ int main(int /*argc*/, char ** /*argv*/)
     // std::cout << "Cloud size: " << surfacePoints.size() << std::endl;
     // std::cout << "Triangle count: " << (flatIndices.size() / 3) << std::endl;
 
-    std::array<GLuint, BUFFER_COUNT> VAOs;
-    std::array<GLuint, BUFFER_COUNT> VBOs;
-    std::array<GLuint, BUFFER_COUNT> EBOs;
+    std::array<GLuint, BUFFER_COUNT> VAOs{};
+    std::array<GLuint, BUFFER_COUNT> VBOs{};
+    std::array<GLuint, BUFFER_COUNT> EBOs{};
     ProgramObject wireframeProgram;
 
     auto mainWindow = app.getMainWindow();
@@ -258,16 +259,19 @@ int main(int /*argc*/, char ** /*argv*/)
         glCreateBuffers(VBOs.size(), VBOs.data());
         glCreateBuffers(EBOs.size(), EBOs.data());
 
-        glNamedBufferData(VBOs[Ray], sizeof(glm::vec3) * 2 + 4, 0, GL_DYNAMIC_DRAW);
-        glVertexArrayVertexBuffer(VAOs[Ray], 0, VBOs[Ray], 0, sizeof(glm::vec3));
+        glNamedBufferData(VBOs[Ray], sizeof(glm::vec3) * 2, 0, GL_DYNAMIC_DRAW);
         glEnableVertexArrayAttrib(VAOs[Ray], 0);
+        glVertexArrayAttribFormat(VAOs[Ray], 0, 3, GL_FLOAT, GL_FALSE, 0);
+        glVertexArrayVertexBuffer(VAOs[Ray], 0, VBOs[Ray], 0, sizeof(glm::vec3));
 
         // Buffers for coordinate system arrows
-        glNamedBufferData(VBOs[Coord], sizeof(BasicVertex) * g_CoordVertices.size() + 4, g_CoordVertices.data(), GL_STATIC_DRAW);
-        glVertexArrayVertexBuffer(VAOs[Coord], 0, VBOs[Coord], offsetof(BasicVertex, pos), sizeof(BasicVertex));
-        glVertexArrayVertexBuffer(VAOs[Coord], 1, VBOs[Coord], offsetof(BasicVertex, color), sizeof(BasicVertex));
+        glNamedBufferData(VBOs[Coord], sizeof(BasicVertex) * g_CoordVertices.size(), g_CoordVertices.data(), GL_STATIC_DRAW);
         glEnableVertexArrayAttrib(VAOs[Coord], 0);
         glEnableVertexArrayAttrib(VAOs[Coord], 1);
+        glVertexArrayAttribFormat(VAOs[Coord], 0, 3, GL_FLOAT, GL_FALSE, offsetof(BasicVertex, pos));
+        glVertexArrayAttribFormat(VAOs[Coord], 1, 3, GL_FLOAT, GL_FALSE, offsetof(BasicVertex, color));
+        glVertexArrayVertexBuffer(VAOs[Coord], 0, VBOs[Coord], 0, sizeof(BasicVertex));
+        glVertexArrayVertexBuffer(VAOs[Coord], 1, VBOs[Coord], 0, sizeof(BasicVertex));
 
         ImGui::GetIO().WantTextInput = true;
         ImGui::GetIO().WantCaptureKeyboard = true;
@@ -277,7 +281,7 @@ int main(int /*argc*/, char ** /*argv*/)
     glm::vec3 wireframeColor(1.0, 0.0, 0.0);
 
     app.addResizeCallback([&](int width, int height) {
-        cam.setAspect((float)width / height);
+        cam.setAspect((float)width / (float)height);
         glViewport(0, 0, width, height);
     });
 

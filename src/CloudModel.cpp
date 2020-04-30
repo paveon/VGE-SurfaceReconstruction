@@ -339,19 +339,36 @@ CloudModel::CloudModel(const std::string &shaderDir) : m_Cloud(bunnyWithNormals(
     glCreateBuffers(m_VBOs.size(), m_VBOs.data());
     glCreateBuffers(m_EBOs.size(), m_EBOs.data());
 
-    glNamedBufferData(m_VBOs[InputPC], sizeof(pcl::PointNormal) * m_Cloud->points.size() + 4, m_Cloud->points.data(), GL_STATIC_DRAW);
-    glVertexArrayVertexBuffer(m_VAOs[InputPC], 0, m_VBOs[InputPC], offsetof(pcl::PointNormal, data), sizeof(pcl::PointNormal));
-    glVertexArrayVertexBuffer(m_VAOs[InputPC], 1, m_VBOs[InputPC], offsetof(pcl::PointNormal, normal), sizeof(pcl::PointNormal));
+    // Buffer point cloud data and setup vertex attributes
+    glNamedBufferData(m_VBOs[InputPC], sizeof(pcl::PointNormal) * m_Cloud->points.size(), m_Cloud->points.data(), GL_STATIC_DRAW);
     glEnableVertexArrayAttrib(m_VAOs[InputPC], 0);
     glEnableVertexArrayAttrib(m_VAOs[InputPC], 1);
+    glVertexArrayAttribFormat(m_VAOs[InputPC], 0, 3, GL_FLOAT, GL_FALSE, offsetof(pcl::PointNormal, data));
+    glVertexArrayAttribFormat(m_VAOs[InputPC], 1, 3, GL_FLOAT, GL_FALSE, offsetof(pcl::PointNormal, normal));
+    glVertexArrayVertexBuffer(m_VAOs[InputPC], 0, m_VBOs[InputPC], 0, sizeof(pcl::PointNormal));
+    glVertexArrayVertexBuffer(m_VAOs[InputPC], 1, m_VBOs[InputPC], 0, sizeof(pcl::PointNormal));
+
+    // Setup vertex attributes for connection data
+    glEnableVertexArrayAttrib(m_VAOs[Connections], 0);
+    glVertexArrayAttribFormat(m_VAOs[Connections], 0, 3, GL_FLOAT, GL_FALSE, offsetof(pcl::PointNormal, data));
+    glVertexArrayVertexBuffer(m_VAOs[Connections], 0, m_VBOs[Connections], 0, sizeof(pcl::PointNormal));
+
+    // Setup vertex attributes for MC corner data
+    glEnableVertexArrayAttrib(m_VAOs[Corners], 0);
+    glEnableVertexArrayAttrib(m_VAOs[Corners], 1);
+    glVertexArrayAttribFormat(m_VAOs[Corners], 0, 3, GL_FLOAT, GL_FALSE, offsetof(BasicVertex, pos));
+    glVertexArrayAttribFormat(m_VAOs[Corners], 1, 3, GL_FLOAT, GL_FALSE, offsetof(BasicVertex, color));
+    glVertexArrayVertexBuffer(m_VAOs[Corners], 0, m_VBOs[Corners], 0, sizeof(BasicVertex));
+    glVertexArrayVertexBuffer(m_VAOs[Corners], 1, m_VBOs[Corners], 0, sizeof(BasicVertex));
 
     RegenerateGrid();
 }
 
 void CloudModel::Draw(glm::mat4 pv, glm::vec3 color)
 {
-    glm::mat4 modelMatrix;
-    glm::mat4 pvm = pv * modelMatrix;
+    glm::mat4 modelMatrix(1.0f);
+    glm::mat4 pvm = pv;
+
     // Draw model
     s_ShaderProgram.use();
     s_ShaderProgram.set3fv("primitiveColor", glm::value_ptr(color));
@@ -364,7 +381,7 @@ void CloudModel::Draw(glm::mat4 pv, glm::vec3 color)
         glDrawArrays(GL_TRIANGLES, 0, m_MeshVertices.size());
     }
 
-    if (m_ShowConnections && m_Connections.size() > 0)
+    if (m_ShowConnections && !m_Connections.empty())
     {
         glm::vec3 connectionColor(1.0f, 0.0f, 0.0f);
         s_ShaderProgram.set3fv("primitiveColor", glm::value_ptr(connectionColor));
@@ -427,6 +444,7 @@ void CloudModel::RegenerateGrid()
     float deltaZ = m_SizeBB.z() / m_GridSizeZ;
     size_t pointsTotal = (m_GridSizeX + 1) * (m_GridSizeY + 1) * (m_GridSizeZ + 1);
     m_CubeCorners.resize(pointsTotal);
+    m_Connections.resize(pointsTotal * 2);
     m_IsoValues.resize(pointsTotal);
 
     for (int x = 0; x < m_GridSizeX + 1; ++x)
@@ -444,12 +462,7 @@ void CloudModel::RegenerateGrid()
     }
 
     // Point cloud of MC corners
-    glNamedBufferData(m_VBOs[Corners], sizeof(BasicVertex) * m_CubeCorners.size() + 4, m_CubeCorners.data(), GL_STATIC_DRAW);
-    glVertexArrayVertexBuffer(m_VAOs[Corners], 0, m_VBOs[Corners], offsetof(BasicVertex, pos), sizeof(BasicVertex));
-    glVertexArrayVertexBuffer(m_VAOs[Corners], 1, m_VBOs[Corners], offsetof(BasicVertex, color), sizeof(BasicVertex));
-    glEnableVertexArrayAttrib(m_VAOs[Corners], 0);
-    glEnableVertexArrayAttrib(m_VAOs[Corners], 1);
-
+    glNamedBufferData(m_VBOs[Corners], sizeof(BasicVertex) * m_CubeCorners.size(), m_CubeCorners.data(), GL_STATIC_DRAW);
     m_InvalidatedGrid = false;
 }
 
@@ -458,7 +471,6 @@ void CloudModel::CalculateIsoValues()
     int K = 1; // Find closest point
     std::vector<int> pointIndices(K);
     std::vector<float> pointDistances(K);
-    m_Connections.resize(m_CubeCorners.size() * 2);
 
     for (size_t i = 0; i < m_CubeCorners.size(); ++i)
     {
@@ -493,16 +505,11 @@ void CloudModel::CalculateIsoValues()
         m_Connections[i * 2 + 1] = nearestPoint;
     }
 
-    glNamedBufferData(m_VBOs[Connections], sizeof(pcl::PointNormal) * m_Connections.size() + 4, m_Connections.data(), GL_STATIC_DRAW);
-    glVertexArrayVertexBuffer(m_VAOs[Connections], 0, m_VBOs[Connections], offsetof(pcl::PointNormal, data), sizeof(pcl::PointNormal));
-    glEnableVertexArrayAttrib(m_VAOs[Connections], 0);
+    // Upload connections data
+    glNamedBufferData(m_VBOs[Connections], sizeof(pcl::PointNormal) * m_Connections.size(), nullptr, GL_STATIC_DRAW);
 
     // Reupload MC corner vertex data with colors
-    glNamedBufferData(m_VBOs[Corners], sizeof(BasicVertex) * m_CubeCorners.size() + 4, m_CubeCorners.data(), GL_STATIC_DRAW);
-    glVertexArrayVertexBuffer(m_VAOs[Corners], 0, m_VBOs[Corners], offsetof(BasicVertex, pos), sizeof(BasicVertex));
-    glVertexArrayVertexBuffer(m_VAOs[Corners], 1, m_VBOs[Corners], offsetof(BasicVertex, color), sizeof(BasicVertex));
-    glEnableVertexArrayAttrib(m_VAOs[Corners], 0);
-    glEnableVertexArrayAttrib(m_VAOs[Corners], 1);
+    glNamedBufferSubData(m_VBOs[Corners], 0, sizeof(BasicVertex) * m_CubeCorners.size(), m_CubeCorners.data());
 }
 
 void CloudModel::Reconstruct()
