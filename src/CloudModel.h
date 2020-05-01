@@ -7,6 +7,8 @@
 #include <pcl/point_types.h>
 #include <pcl/search/kdtree.h>
 
+#include <tuple>
+#include <map>
 #include <BaseApp.h>
 #include <Loader.h>
 #include <Gui.h>
@@ -52,8 +54,28 @@ class CloudModel {
     std::vector<std::tuple<size_t, size_t, size_t>> m_CornersXYZ;
     std::vector<float> m_IsoValues;
 
+    std::map<std::pair<size_t, size_t>, size_t> m_VertexIndices;
+    std::vector<GLuint> m_MeshIndices;
     std::vector<glm::vec3> m_MeshVertices;
     std::vector<glm::vec3> m_CloudNormals;
+
+    // Indices of MC edge vertices in order
+    // compatible with the edge and triangle table.
+    // Used when computing positions of edge intersections
+    static constexpr std::array<size_t, 24> m_RelativeCornerIndices{
+            0, 1,
+            1, 2,
+            2, 3,
+            3, 0,
+            4, 5,
+            5, 6,
+            6, 7,
+            7, 4,
+            0, 4,
+            1, 5,
+            2, 6,
+            3, 7
+    };
 
     enum Buffers {
         Model,

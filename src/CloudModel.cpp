@@ -1,7 +1,6 @@
 #include "CloudModel.h"
 #include "MCTable.h"
 
-
 CloudModel::CloudModel(pcl::PointCloud<pcl::PointNormal>::Ptr cloud, const std::string &shaderDir) :
         m_Cloud(std::move(cloud)),
         m_Tree(new pcl::search::KdTree<pcl::PointNormal>()) {
@@ -82,6 +81,7 @@ CloudModel::CloudModel(pcl::PointCloud<pcl::PointNormal>::Ptr cloud, const std::
 void CloudModel::Draw(glm::mat4 pv, glm::vec3 color) {
     glm::mat4 modelMatrix(1.0f);
     glm::mat4 pvm = pv * modelMatrix;
+    glm::vec3 outlineColor(1.0f, 0.0f, 0.0f);
 
     if (m_ShowMesh && !m_MeshVertices.empty()) {
         // Draw model
@@ -89,7 +89,13 @@ void CloudModel::Draw(glm::mat4 pv, glm::vec3 color) {
         s_MeshProgram.set3fv("primitiveColor", glm::value_ptr(color));
         s_MeshProgram.setMatrix4fv("pvm", glm::value_ptr(pvm));
         glBindVertexArray(m_VAOs[Model]);
-        glDrawArrays(GL_TRIANGLES, 0, m_MeshVertices.size());
+        glDrawElements(GL_TRIANGLES, m_MeshIndices.size(), GL_UNSIGNED_INT, nullptr);
+
+        // Draw outlines of model triangles, it looks weird without illumination model otherwise
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        s_MeshProgram.set3fv("primitiveColor", glm::value_ptr(outlineColor));
+        glDrawElements(GL_TRIANGLES, m_MeshIndices.size(), GL_UNSIGNED_INT, nullptr);
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     }
 
     s_ShaderProgram.use();
@@ -144,16 +150,6 @@ void CloudModel::Draw(glm::mat4 pv, glm::vec3 color) {
         glDrawArrays(GL_POINTS, 0, m_CubeCorners.size());
         glPointSize(1.0f);
     }
-
-    //TODO: draw model
-    // glBindVertexArray(m_VAOs[Model]);
-    // glDrawElements(GL_TRIANGLES, flatIndices.size(), GL_UNSIGNED_INT, nullptr);
-
-    // Draw outlines of model triangles, it looks weird without illumination model otherwise
-    // glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-    // s_ShaderProgram.set3fv("primitiveColor", glm::value_ptr(color));
-    // glDrawElements(GL_TRIANGLES, flatIndices.size(), GL_UNSIGNED_INT, nullptr);
-    // glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 }
 
 void CloudModel::RegenerateGrid() {
@@ -212,13 +208,6 @@ void CloudModel::CalculateIsoValues() {
         // Red color for corner points outside the geometry and green for points that are inside
         cornerVertex.color = distance <= 0 ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
 
-        // size_t x = i % (m_GridSizeX + 1);
-        // size_t idx = i / (m_GridSizeX + 1);
-        // size_t y = idx % (m_GridSizeY + 1);
-        // idx /= (m_GridSizeY + 1);
-        // size_t z = idx;
-        // printf("[%lu, %lu, %lu] distance: %f\n", x, y, z, distance);
-
         m_Connections[i * 2] = cornerPoint;
         m_Connections[i * 2 + 1] = nearestPoint;
     }
@@ -237,60 +226,38 @@ void CloudModel::Reconstruct() {
 
     CalculateIsoValues();
     m_MeshVertices.clear();
+    m_MeshIndices.clear();
+    m_VertexIndices.clear();
 
     size_t zPointCount = m_GridSizeZ + 1;
     size_t yzPointCount = (m_GridSizeY + 1) * zPointCount;
-    std::array<size_t, 8> cornerIndices{
-        0,
-        1,
-        zPointCount,
-        zPointCount + 1,
-        yzPointCount,
-        yzPointCount + 1,
-        yzPointCount + zPointCount,
-        yzPointCount + zPointCount + 1,
-    };
+
+    std::array<GLuint, 12> intersections{};
+    std::array<glm::vec3, 8> cubeCorners{};
+    std::array<float, 8> isoValues{};
 
     for (int x = 0; x < m_GridSizeX; ++x) {
         for (int y = 0; y < m_GridSizeY; ++y) {
             for (int z = 0; z < m_GridSizeZ; ++z) {
-//                std::array<size_t, 8> cornerIndices{
-//                        z + (y * zPointCount) + (x * yzPlaneCount),
-//                        1 + z + (y * zPointCount) + (x * yzPlaneCount),
-//                        z + ((y + 1) * zPointCount) + (x * yzPlaneCount),
-//                        1 + z + ((y + 1) * zPointCount) + (x * yzPlaneCount),
-//                        z + (y * zPointCount) + ((x + 1) * yzPlaneCount),
-//                        1 + z + (y * zPointCount) + ((x + 1) * yzPlaneCount),
-//                        z + ((y + 1) * zPointCount) + ((x + 1) * yzPlaneCount),
-//                        1 + z + ((y + 1) * zPointCount) + ((x + 1) * yzPlaneCount),
-//                };
+                std::array<size_t, 8> cornerIndices{
+                        z + (y * zPointCount) + (x * yzPointCount),
+                        1 + z + (y * zPointCount) + (x * yzPointCount),
+                        1 + z + ((y + 1) * zPointCount) + (x * yzPointCount),
+                        z + ((y + 1) * zPointCount) + (x * yzPointCount),
 
-                std::array<glm::vec3, 8> corners{
-                        m_CubeCorners[cornerIndices[0]].pos,
-                        m_CubeCorners[cornerIndices[1]].pos,
-                        m_CubeCorners[cornerIndices[3]].pos,
-                        m_CubeCorners[cornerIndices[2]].pos,
-
-                        m_CubeCorners[cornerIndices[4]].pos,
-                        m_CubeCorners[cornerIndices[5]].pos,
-                        m_CubeCorners[cornerIndices[7]].pos,
-                        m_CubeCorners[cornerIndices[6]].pos,
+                        z + (y * zPointCount) + ((x + 1) * yzPointCount),
+                        1 + z + (y * zPointCount) + ((x + 1) * yzPointCount),
+                        1 + z + ((y + 1) * zPointCount) + ((x + 1) * yzPointCount),
+                        z + ((y + 1) * zPointCount) + ((x + 1) * yzPointCount)
                 };
 
-                std::array<float, 8> isoValues{
-                        m_IsoValues[cornerIndices[0]++],
-                        m_IsoValues[cornerIndices[1]++],
-                        m_IsoValues[cornerIndices[3]++],
-                        m_IsoValues[cornerIndices[2]++],
-
-                        m_IsoValues[cornerIndices[4]++],
-                        m_IsoValues[cornerIndices[5]++],
-                        m_IsoValues[cornerIndices[7]++],
-                        m_IsoValues[cornerIndices[6]++],
-                };
+                for (size_t i = 0; i < cubeCorners.size(); ++i) {
+                    cubeCorners[i] = m_CubeCorners[cornerIndices[i]].pos;
+                    isoValues[i] = m_IsoValues[cornerIndices[i]];
+                }
 
                 uint32_t cubeIdx = 0;
-                for (size_t i = 0; i < corners.size(); ++i)
+                for (size_t i = 0; i < cubeCorners.size(); ++i)
                     cubeIdx |= unsigned(isoValues[i] <= 0) << i;
 
                 /* Cube is entirely in/out of the surface */
@@ -298,39 +265,41 @@ void CloudModel::Reconstruct() {
                     continue;
 
                 // Find the vertices where the surface intersects the cube
-                // TODO: Cache edge intersections to avoid recomputations (future optimization)
-                // Maybe map (p1, p2) -> intersection point?
                 uint32_t cubeConfig = edgeTable[cubeIdx];
-                std::array<size_t, 24> vertexIndices{
-                        0, 1,
-                        1, 2,
-                        2, 3,
-                        3, 0,
-                        4, 5,
-                        5, 6,
-                        6, 7,
-                        7, 4,
-                        0, 4,
-                        1, 5,
-                        2, 6,
-                        3, 7
-                };
-
-                std::array<glm::vec3, 12> intersections{};
                 for (size_t i = 0; i < intersections.size(); ++i) {
                     if (cubeConfig & (1u << i)) {
-                        const glm::vec3 &p1(corners[vertexIndices[i * 2]]);
-                        const glm::vec3 &p2(corners[vertexIndices[i * 2 + 1]]);
-                        intersections[i] = (p1 + p2) / 2.0f;
+                        size_t relativeI1 = m_RelativeCornerIndices[i * 2];
+                        size_t relativeI2 = m_RelativeCornerIndices[i * 2 + 1];
+                        size_t absoluteI1 = cornerIndices[relativeI1] - 1;
+                        size_t absoluteI2 = cornerIndices[relativeI2] - 1;
+                        if (absoluteI2 < absoluteI1) {
+                            // We want unique identifier of an edge
+                            std::swap(absoluteI1, absoluteI2);
+                        }
 
-                        float l0 = isoValues[vertexIndices[i * 2]];
-                        float l1 = isoValues[vertexIndices[i * 2 + 1]];
-                        const float interpCoeff = (0 - l0) / (l1 - l0);
-                        intersections[i] = glm::vec3(
-                                p1.x * (1.0f - interpCoeff) + p2.x * interpCoeff,
-                                p1.y * (1.0f - interpCoeff) + p2.y * interpCoeff,
-                                p1.z * (1.0f - interpCoeff) + p2.z * interpCoeff
-                        );
+                        auto it = m_VertexIndices.find({absoluteI1, absoluteI2});
+                        if (it != m_VertexIndices.end()) {
+                            // Interpolated edge vertex was already computed, retrieve its index
+                            intersections[i] = it->second;
+                        } else {
+                            // Edge vertex doesn't exist yet. Compute it and store index
+                            const glm::vec3 &p1(cubeCorners[relativeI1]);
+                            const glm::vec3 &p2(cubeCorners[relativeI2]);
+                            float l0 = isoValues[relativeI1];
+                            float l1 = isoValues[relativeI2];
+                            const float interpCoeff = (0 - l0) / (l1 - l0);
+
+                            // New index
+                            intersections[i] = m_MeshVertices.size();
+                            m_VertexIndices[{absoluteI1, absoluteI2}] = intersections[i];
+
+                            // New vertex with the new index position
+                            m_MeshVertices.emplace_back(glm::vec3(
+                                    p1.x * (1.0f - interpCoeff) + p2.x * interpCoeff,
+                                    p1.y * (1.0f - interpCoeff) + p2.y * interpCoeff,
+                                    p1.z * (1.0f - interpCoeff) + p2.z * interpCoeff
+                            ));
+                        }
                     }
                 }
 
@@ -340,9 +309,9 @@ void CloudModel::Reconstruct() {
                 //#pragma omp critical(triangleEmit)
                 {
                     for (size_t i = 0; configTriangles[i] != -1; i += 3) {
-                        m_MeshVertices.emplace_back(intersections[configTriangles[i]]);
-                        m_MeshVertices.emplace_back(intersections[configTriangles[i + 1]]);
-                        m_MeshVertices.emplace_back(intersections[configTriangles[i + 2]]);
+                        m_MeshIndices.emplace_back(intersections[configTriangles[i]]);
+                        m_MeshIndices.emplace_back(intersections[configTriangles[i + 1]]);
+                        m_MeshIndices.emplace_back(intersections[configTriangles[i + 2]]);
                     }
                 }
             }
@@ -351,6 +320,8 @@ void CloudModel::Reconstruct() {
 
     // Buffer model vertex and index data and bind buffers to VAO
     glNamedBufferData(m_VBOs[Model], sizeof(glm::vec3) * m_MeshVertices.size(), m_MeshVertices.data(), GL_STATIC_DRAW);
+    glNamedBufferData(m_EBOs[Model], sizeof(GLuint) * m_MeshIndices.size(), m_MeshIndices.data(), GL_STATIC_DRAW);
+    glVertexArrayElementBuffer(m_VAOs[Model], m_EBOs[Model]);
     glEnableVertexArrayAttrib(m_VAOs[Model], 0);
     glVertexArrayAttribFormat(m_VAOs[Model], 0, 3, GL_FLOAT, GL_FALSE, 0);
     glVertexArrayVertexBuffer(m_VAOs[Model], 0, m_VBOs[Model], 0, sizeof(glm::vec3));
