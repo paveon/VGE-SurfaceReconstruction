@@ -27,6 +27,10 @@ CloudModel::CloudModel(pcl::PointCloud<pcl::PointNormal>::Ptr cloud, const std::
         auto colorVS = compileShader(GL_VERTEX_SHADER, Loader::text(shaderDir + "wireframe.vert"));
         auto colorFS = compileShader(GL_FRAGMENT_SHADER, Loader::text(shaderDir + "wireframe.frag"));
         s_ColorProgram = createProgram(colorVS, colorFS);
+
+        auto meshVS = compileShader(GL_VERTEX_SHADER, Loader::text(shaderDir + "mesh.vert"));
+        auto meshFS = compileShader(GL_FRAGMENT_SHADER, Loader::text(shaderDir + "mesh.frag"));
+        s_MeshProgram = createProgram(meshVS, meshFS);
     }
 
     glCreateVertexArrays(m_VAOs.size(), m_VAOs.data());
@@ -79,16 +83,18 @@ void CloudModel::Draw(glm::mat4 pv, glm::vec3 color) {
     glm::mat4 modelMatrix(1.0f);
     glm::mat4 pvm = pv * modelMatrix;
 
-    // Draw model
-    s_ShaderProgram.use();
-    s_ShaderProgram.set3fv("primitiveColor", glm::value_ptr(color));
-    s_ShaderProgram.setMatrix4fv("pvm", glm::value_ptr(pvm));
-
     if (m_ShowMesh && !m_MeshVertices.empty()) {
-        s_ShaderProgram.set3fv("primitiveColor", glm::value_ptr(color));
+        // Draw model
+        s_MeshProgram.use();
+        s_MeshProgram.set3fv("primitiveColor", glm::value_ptr(color));
+        s_MeshProgram.setMatrix4fv("pvm", glm::value_ptr(pvm));
         glBindVertexArray(m_VAOs[Model]);
         glDrawArrays(GL_TRIANGLES, 0, m_MeshVertices.size());
     }
+
+    s_ShaderProgram.use();
+    s_ShaderProgram.set3fv("primitiveColor", glm::value_ptr(color));
+    s_ShaderProgram.setMatrix4fv("pvm", glm::value_ptr(pvm));
 
     if (m_ShowConnections && !m_Connections.empty()) {
         glm::vec3 connectionColor(1.0f, 0.0f, 0.0f);
@@ -234,47 +240,54 @@ void CloudModel::Reconstruct() {
 
     size_t zPointCount = m_GridSizeZ + 1;
     size_t yzPointCount = (m_GridSizeY + 1) * zPointCount;
-    size_t cornerIdx = 0;
-    std::array<size_t, 8> cornerOffsets{
-            0,
-            1,
-            zPointCount,
-            zPointCount + 1,
-            yzPointCount,
-            yzPointCount + 1,
-            yzPointCount + zPointCount,
-            yzPointCount + zPointCount + 1
+    std::array<size_t, 8> cornerIndices{
+        0,
+        1,
+        zPointCount,
+        zPointCount + 1,
+        yzPointCount,
+        yzPointCount + 1,
+        yzPointCount + zPointCount,
+        yzPointCount + zPointCount + 1,
     };
 
-    for (int x = 0; x < m_GridSizeX + 1; ++x) {
-        for (int y = 0; y < m_GridSizeY + 1; ++y) {
-            for (int z = 0; z < m_GridSizeZ + 1; ++z) {
+    for (int x = 0; x < m_GridSizeX; ++x) {
+        for (int y = 0; y < m_GridSizeY; ++y) {
+            for (int z = 0; z < m_GridSizeZ; ++z) {
+//                std::array<size_t, 8> cornerIndices{
+//                        z + (y * zPointCount) + (x * yzPlaneCount),
+//                        1 + z + (y * zPointCount) + (x * yzPlaneCount),
+//                        z + ((y + 1) * zPointCount) + (x * yzPlaneCount),
+//                        1 + z + ((y + 1) * zPointCount) + (x * yzPlaneCount),
+//                        z + (y * zPointCount) + ((x + 1) * yzPlaneCount),
+//                        1 + z + (y * zPointCount) + ((x + 1) * yzPlaneCount),
+//                        z + ((y + 1) * zPointCount) + ((x + 1) * yzPlaneCount),
+//                        1 + z + ((y + 1) * zPointCount) + ((x + 1) * yzPlaneCount),
+//                };
 
                 std::array<glm::vec3, 8> corners{
-                        m_CubeCorners[cornerIdx].pos,
-                        m_CubeCorners[cornerIdx + cornerOffsets[1]].pos,
-                        m_CubeCorners[cornerIdx + cornerOffsets[3]].pos,
-                        m_CubeCorners[cornerIdx + cornerOffsets[2]].pos,
+                        m_CubeCorners[cornerIndices[0]].pos,
+                        m_CubeCorners[cornerIndices[1]].pos,
+                        m_CubeCorners[cornerIndices[3]].pos,
+                        m_CubeCorners[cornerIndices[2]].pos,
 
-                        m_CubeCorners[cornerIdx + cornerOffsets[4]].pos,
-                        m_CubeCorners[cornerIdx + cornerOffsets[5]].pos,
-                        m_CubeCorners[cornerIdx + cornerOffsets[7]].pos,
-                        m_CubeCorners[cornerIdx + cornerOffsets[6]].pos,
+                        m_CubeCorners[cornerIndices[4]].pos,
+                        m_CubeCorners[cornerIndices[5]].pos,
+                        m_CubeCorners[cornerIndices[7]].pos,
+                        m_CubeCorners[cornerIndices[6]].pos,
                 };
 
                 std::array<float, 8> isoValues{
-                        m_IsoValues[cornerIdx],
-                        m_IsoValues[cornerIdx + cornerOffsets[1]],
-                        m_IsoValues[cornerIdx + cornerOffsets[3]],
-                        m_IsoValues[cornerIdx + cornerOffsets[2]],
+                        m_IsoValues[cornerIndices[0]++],
+                        m_IsoValues[cornerIndices[1]++],
+                        m_IsoValues[cornerIndices[3]++],
+                        m_IsoValues[cornerIndices[2]++],
 
-                        m_IsoValues[cornerIdx + cornerOffsets[4]],
-                        m_IsoValues[cornerIdx + cornerOffsets[5]],
-                        m_IsoValues[cornerIdx + cornerOffsets[7]],
-                        m_IsoValues[cornerIdx + cornerOffsets[6]],
+                        m_IsoValues[cornerIndices[4]++],
+                        m_IsoValues[cornerIndices[5]++],
+                        m_IsoValues[cornerIndices[7]++],
+                        m_IsoValues[cornerIndices[6]++],
                 };
-
-                cornerIdx++;
 
                 uint32_t cubeIdx = 0;
                 for (size_t i = 0; i < corners.size(); ++i)
@@ -288,7 +301,6 @@ void CloudModel::Reconstruct() {
                 // TODO: Cache edge intersections to avoid recomputations (future optimization)
                 // Maybe map (p1, p2) -> intersection point?
                 uint32_t cubeConfig = edgeTable[cubeIdx];
-                std::array<glm::vec3, 12> intersections;
                 std::array<size_t, 24> vertexIndices{
                         0, 1,
                         1, 2,
@@ -304,20 +316,21 @@ void CloudModel::Reconstruct() {
                         3, 7
                 };
 
+                std::array<glm::vec3, 12> intersections{};
                 for (size_t i = 0; i < intersections.size(); ++i) {
                     if (cubeConfig & (1u << i)) {
                         const glm::vec3 &p1(corners[vertexIndices[i * 2]]);
                         const glm::vec3 &p2(corners[vertexIndices[i * 2 + 1]]);
                         intersections[i] = (p1 + p2) / 2.0f;
 
-                         float l0 = isoValues[vertexIndices[i * 2]];
-                         float l1 = isoValues[vertexIndices[i * 2 + 1]];
-                         const float interpCoeff = (0 - l0) / (l1 - l0);
-                         intersections[i] = glm::vec3(
-                             p1.x * (1.0f - interpCoeff) + p2.x * interpCoeff,
-                             p1.y * (1.0f - interpCoeff) + p2.y * interpCoeff,
-                             p1.z * (1.0f - interpCoeff) + p2.z * interpCoeff
-                         );
+                        float l0 = isoValues[vertexIndices[i * 2]];
+                        float l1 = isoValues[vertexIndices[i * 2 + 1]];
+                        const float interpCoeff = (0 - l0) / (l1 - l0);
+                        intersections[i] = glm::vec3(
+                                p1.x * (1.0f - interpCoeff) + p2.x * interpCoeff,
+                                p1.y * (1.0f - interpCoeff) + p2.y * interpCoeff,
+                                p1.z * (1.0f - interpCoeff) + p2.z * interpCoeff
+                        );
                     }
                 }
 
@@ -343,6 +356,7 @@ void CloudModel::Reconstruct() {
     glVertexArrayVertexBuffer(m_VAOs[Model], 0, m_VBOs[Model], 0, sizeof(glm::vec3));
 }
 
+ProgramObject CloudModel::s_MeshProgram;
 ProgramObject CloudModel::s_ShaderProgram;
 ProgramObject CloudModel::s_GeometryProgram;
 ProgramObject CloudModel::s_ColorProgram;

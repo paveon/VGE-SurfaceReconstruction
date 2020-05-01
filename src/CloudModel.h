@@ -68,6 +68,7 @@ class CloudModel {
     std::array<GLuint, BUFFER_COUNT> m_VBOs = {};
     std::array<GLuint, BUFFER_COUNT> m_EBOs = {};
 
+    static ProgramObject s_MeshProgram;
     static ProgramObject s_ShaderProgram;
     static ProgramObject s_GeometryProgram;
     static ProgramObject s_ColorProgram;
