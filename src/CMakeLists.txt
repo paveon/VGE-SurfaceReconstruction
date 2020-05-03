@@ -29,6 +29,14 @@ add_definitions(${PCL_DEFINITIONS})
 
 list(REMOVE_ITEM PCL_LIBRARIES "vtkproj4")
 
+find_package(OpenMP)
+
 add_executable(${PROJECT_NAME} ${src} ${shaders})
 target_link_libraries(${PROJECT_NAME} PUBLIC Framework imgui ${PCL_LIBRARIES})
-#target_link_libraries(${PROJECT_NAME} PUBLIC OpenMP::OpenMP_CXX)
+
+IF (OpenMP_FOUND)
+    IF (CMAKE_COMPILER_IS_GNUCXX)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+    ENDIF ()
+    target_link_libraries(${PROJECT_NAME} PUBLIC OpenMP::OpenMP_CXX)
+ENDIF ()

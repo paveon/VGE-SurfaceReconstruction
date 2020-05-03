@@ -1,7 +1,6 @@
 #define SDL_MAIN_HANDLED
 
 #include <iostream>
-//#include <chrono>
 #include <tuple>
 
 // #include <pcl/common/vector_average.h>
@@ -107,16 +106,27 @@ static const std::array<VertexRGB, 34> g_CoordVertices{
 //     return cloud_normals;
 // }
 
-enum Buffers
-{
+enum Buffers {
     Ray,
     Coord,
     BUFFER_COUNT
 };
 
+enum class ReconstructionMethods {
+    ModifiedHoppe,
+    PCL_MarchingCubes,
+    PCL_Hoppe,
+    PCL_Poisson
+};
 
-int main(int /*argc*/, char ** /*argv*/)
-{
+
+int main(int /*argc*/, char ** /*argv*/) {
+    int threadCount = omp_get_max_threads();
+//    omp_set_num_threads
+//    omp_get_thread_num
+//    omp_get_num_threads
+    std::cout << "[Thread count] " << threadCount << std::endl;
+
     // Simple caching system for later (we might want to display multiple models during presentation?)
     // std::ifstream indexCache("index_cache.dat", std::ios::in | std::ios::binary);
     // if (false && pcl::io::loadPCDFile<pcl::PointNormal>("surface_cache.pcd", *surfaceCloud) >= 0 && indexCache.is_open())
@@ -129,36 +139,6 @@ int main(int /*argc*/, char ** /*argv*/)
     // }
     // else
     // {
-    //     pcl::PointCloud<pcl::PointNormal>::Ptr cloud_point_normals;
-    //     // if (false)
-    //     //     cloud_point_normals = bunnyWithOutNormals();
-    //     // else
-    //     //     cloud_point_normals = bunnyWithNormals();
-
-    //     // pcl::Poisson<pcl::PointNormal> poisson;
-    //     // poisson.setDepth(6); // Was painfully slow with depth of 12
-    //     // poisson.setInputCloud(cloud_point_normals);
-
-    //     std::vector<pcl::Vertices> outputIndices;
-
-    //     // Reconstruction
-    //     pcl::MarchingCubesHoppe<pcl::PointNormal> hoppe;
-    //     hoppe.setInputCloud(cloud_point_normals);
-    //     hoppe.setGridResolution(40, 40, 40);
-    //     hoppe.reconstruct(*surfaceCloud, outputIndices);
-    //     poisson.reconstruct(*surfaceCloud, outputIndices);
-
-    //     // PCL uses weird memory layout for indices, copy the data
-    //     // into new vector with flat layout so that it can be used by OpenGL
-    //     size_t idx = 0;
-    //     flatIndices.resize(outputIndices.size() * 3);
-    //     for (size_t i = 0; i < outputIndices.size(); i++)
-    //     {
-    //         const auto &indices = outputIndices[i];
-    //         for (size_t index : indices.vertices)
-    //             flatIndices[idx++] = index;
-    //     }
-
     //     // Save cache
     //     pcl::io::savePCDFileASCII("surface_cache.pcd", *surfaceCloud);
     //     std::ofstream cacheFile("index_cache.dat", std::ios::out | std::ios::binary);
@@ -182,13 +162,6 @@ int main(int /*argc*/, char ** /*argv*/)
             CloudModel(bunnyCloud(), g_ShaderFolder),
             CloudModel(sphereCloud(0.5f), g_ShaderFolder)
     };
-
-    // TODO: Move to CloudModel later on
-    // std::vector<GLuint> flatIndices;
-    // pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(new pcl::PointCloud<pcl::PointNormal>());
-    // auto &surfacePoints = surfaceCloud->points;
-    // std::cout << "Cloud size: " << surfacePoints.size() << std::endl;
-    // std::cout << "Triangle count: " << (flatIndices.size() / 3) << std::endl;
 
     std::array<GLuint, BUFFER_COUNT> VAOs{};
     std::array<GLuint, BUFFER_COUNT> VBOs{};
@@ -246,14 +219,26 @@ int main(int /*argc*/, char ** /*argv*/)
     glm::vec3 wireframeColor(1.0, 0.0, 0.0);
 
     app.addResizeCallback([&](int width, int height) {
-        cam.setAspect((float)width / (float)height);
+        cam.setAspect((float) width / (float) height);
         glViewport(0, 0, width, height);
     });
 
+    int neighbourhoodSize = 3;
     int currentModel = 0;
-    std::array<const char*, 2> modelNames{
+    int gridResX = 10;
+    int gridResY = 10;
+    int gridResZ = 10;
+    std::array<const char *, 2> modelNames{
             "Bunny",
             "Sphere"
+    };
+
+    int currentMethod = (int) ReconstructionMethods::ModifiedHoppe;
+    std::array<const char *, 4> methodLabels{
+            "Modified Hoppe",
+            "PCL: Marching Cubes",
+            "PCL: Hoppe's",
+            "PCL: Poisson"
     };
 
     app.addDrawCallback([&]() {
@@ -268,8 +253,7 @@ int main(int /*argc*/, char ** /*argv*/)
         glDrawArrays(GL_LINES, 0, g_CoordVertices.size());
         glLineWidth(1.0f);
 
-        if (rayCast)
-        {
+        if (rayCast) {
             glBindVertexArray(VAOs[Ray]);
             glDrawArrays(GL_LINES, 0, 2);
         }
@@ -280,86 +264,87 @@ int main(int /*argc*/, char ** /*argv*/)
         label("FPS: " + std::to_string(ImGui::GetIO().Framerate));
         ImGui::Begin("Options", nullptr, ImVec2(300, 500));
 
-        ImGui::Combo("Model", &currentModel, modelNames.data(), modelNames.size());
-
-        ImGui::Text("Grid resolution");
-
-        // Cannot merge due to short circuit || evaluation. Causes flickering
-        // when moving the slider because the render command is skipped
-        if (ImGui::SliderInt("X", &models[currentModel].m_GridSizeX, 5, 100))
-        {
-            models[currentModel].m_InvalidatedGrid = true;
+        if (ImGui::Combo("Model", &currentModel, modelNames.data(), modelNames.size())) {
+            gridResX = models[currentModel].m_Grid.GetResX();
+            gridResY = models[currentModel].m_Grid.GetResY();
+            gridResZ = models[currentModel].m_Grid.GetResZ();
         }
 
-        if (ImGui::SliderInt("Y", &models[currentModel].m_GridSizeY, 5, 100))
-        {
-            models[currentModel].m_InvalidatedGrid = true;
-        }
+        ImGui::Combo("Method", &currentMethod, methodLabels.data(), methodLabels.size());
 
-        if (ImGui::SliderInt("Z", &models[currentModel].m_GridSizeZ, 5, 100))
-        {
-            models[currentModel].m_InvalidatedGrid = true;
-        }
+        switch (static_cast<ReconstructionMethods>(currentMethod)) {
+            case ReconstructionMethods::ModifiedHoppe:
+                ImGui::Text("Grid resolution");
 
-        if (ImGui::Button("Regenerate grid"))
-        {
-            models[currentModel].RegenerateGrid();
-        }
+                // Cannot merge due to short circuit || evaluation. Causes flickering
+                // when moving the slider because the render command is skipped
+                if (ImGui::SliderInt("X", &gridResX, 5, 100))
+                    models[currentModel].m_Grid.SetResX(gridResX);
+                if (ImGui::SliderInt("Y", &gridResY, 5, 100))
+                    models[currentModel].m_Grid.SetResY(gridResY);
+                if (ImGui::SliderInt("Z", &gridResZ, 5, 100))
+                    models[currentModel].m_Grid.SetResZ(gridResZ);
+                if (ImGui::Button("Regenerate grid"))
+                    models[currentModel].m_Grid.Regenerate();
 
-        if (ImGui::Button("Reconstruct"))
-        {
-            models[currentModel].Reconstruct();
+                ImGui::Text("Neighbourhood size");
+                ImGui::SliderInt("", &neighbourhoodSize, 1, 10);
+
+                if (ImGui::Button("Reconstruct"))
+                    models[currentModel].HoppeReconstruction(neighbourhoodSize);
+                break;
+
+            case ReconstructionMethods::PCL_Hoppe:
+                break;
+
+            case ReconstructionMethods::PCL_MarchingCubes:
+                break;
+
+            case ReconstructionMethods::PCL_Poisson:
+                break;
         }
 
         ImGui::Text("Debug Options");
         ImGui::Checkbox("Show mesh", &models[currentModel].m_ShowMesh);
         ImGui::Checkbox("Show grid", &models[currentModel].m_ShowGrid);
         ImGui::Checkbox("Show input PC", &models[currentModel].m_ShowInputPC);
-        if (models[currentModel].m_ShowInputPC)
-        {
+        if (models[currentModel].m_ShowInputPC) {
             ImGui::Checkbox("Show normals", &models[currentModel].m_ShowNormals);
         }
 
-        ImGui::Checkbox("Show connections", &models[currentModel].m_ShowConnections);
-        ImGui::SliderInt("Connection index", &models[currentModel].m_ConnectionIdx, 0, models[currentModel].GetCornerCount() - 1);
-
         ImGui::End();
 
-        if (showErrorPopup)
-        {
-            if (ImGui::BeginPopupContextVoid("Error"))
-            {
+        if (showErrorPopup) {
+            if (ImGui::BeginPopupContextVoid("Error")) {
                 ImGui::Text("%s", errorBuffer);
                 ImGui::EndPopup();
             }
         }
 
-        if (showDemo)
-        {
+        if (showDemo) {
             ImGui::ShowTestWindow(&showDemo);
         }
     });
 
     // TODO: implement some shortcuts in the future
     app.addKeyPressCallback([&](SDL_Keycode code, uint16_t) {
-        switch (code)
-        {
-        case SDLK_ESCAPE:
-            break;
-        case SDLK_LEFT:
-            break;
-        case SDLK_RIGHT:
-            break;
-        case SDLK_UP:
-            break;
-        case SDLK_DOWN:
-            break;
-        case SDLK_PAGEUP:
-            break;
-        case SDLK_PAGEDOWN:
-            break;
-        case SDLK_DELETE:
-            break;
+        switch (code) {
+            case SDLK_ESCAPE:
+                break;
+            case SDLK_LEFT:
+                break;
+            case SDLK_RIGHT:
+                break;
+            case SDLK_UP:
+                break;
+            case SDLK_DOWN:
+                break;
+            case SDLK_PAGEUP:
+                break;
+            case SDLK_PAGEDOWN:
+                break;
+            case SDLK_DELETE:
+                break;
         }
     });
 
@@ -381,8 +366,7 @@ int main(int /*argc*/, char ** /*argv*/)
     };
 
     app.addMousePressCallback([&](uint8_t button, int, int) {
-        if (button == 3)
-        {
+        if (button == 3) {
             std::array<glm::vec3, 2> rayVertices{rayOrigin, rayOrigin + (rayDir * 100.0f)};
             glNamedBufferSubData(VBOs[Ray], 0, sizeof(glm::vec3) * 2, rayVertices.data());
             rayCast = true;
@@ -390,7 +374,7 @@ int main(int /*argc*/, char ** /*argv*/)
     });
 
     app.addMouseMoveCallback([&](int, int, int x, int y) {
-        auto [origin, dir] = castRay(x, y);
+        auto[origin, dir] = castRay(x, y);
         rayOrigin = origin;
         rayDir = dir;
     });

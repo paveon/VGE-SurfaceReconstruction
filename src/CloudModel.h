@@ -1,6 +1,16 @@
 #ifndef CLOUD_MODEL_H
 #define CLOUD_MODEL_H
 
+#if defined(_OPENMP)
+#include <omp.h>
+#else
+void omp_set_num_threads (int);
+int omp_get_num_threads();
+int omp_get_max_threads();
+int omp_get_thread_num();
+int omp_get_num_procs();
+#endif
+
 #include <pcl/common/common.h>
 #include <pcl/common/vector_average.h>
 #include <pcl/Vertices.h>
@@ -8,7 +18,7 @@
 #include <pcl/search/kdtree.h>
 
 #include <tuple>
-#include <map>
+#include <unordered_map>
 #include <BaseApp.h>
 #include <Loader.h>
 #include <Gui.h>
@@ -43,26 +53,77 @@ struct VertexRGBNormal {
 };
 
 
-class CloudModel {
-    pcl::PointCloud<pcl::PointNormal>::Ptr m_Cloud;
-    pcl::search::KdTree<pcl::PointNormal>::Ptr m_Tree;
-    Eigen::Vector4f m_MinBB;
-    Eigen::Vector4f m_MaxBB;
-    Eigen::Vector4f m_SizeBB;
-    std::vector<pcl::PointNormal> m_Connections;
-    std::vector<VertexRGB> m_CubeCorners;
-    std::vector<std::tuple<size_t, size_t, size_t>> m_CornersXYZ;
-    std::vector<float> m_IsoValues;
+struct BoundingBox {
+    Eigen::Vector4f min;
+    Eigen::Vector4f max;
+    Eigen::Vector4f size;
 
-    std::map<std::pair<size_t, size_t>, size_t> m_VertexIndices;
-    std::vector<GLuint> m_MeshIndices;
-    std::vector<glm::vec3> m_MeshVertices;
-    std::vector<glm::vec3> m_CloudNormals;
+    BoundingBox(pcl::PointCloud<pcl::PointNormal>::Ptr& cloud, float increase) {
+        pcl::getMinMax3D(*cloud, min, max);
+        size = max - min;
+        min -= (size * (increase / 2.0f));
+        max += (size * (increase / 2.0f));
+        size *= (1.0f + increase);
+    }
 
+    void Print() {
+        printf("[BB] Size: [%f, %f, %f]\n", size.x(), size.y(), size.z());
+        printf("[BB] Min: [%f, %f, %f]\n", min.x(), min.y(), min.z());
+        printf("[BB] Max: [%f, %f, %f]\n", max.x(), max.y(), max.z());
+    }
+};
+
+class CloudModel;
+
+class Grid {
+    CloudModel& m_ParentModel;
+    GLuint m_VAO = 0;
+    GLuint m_VBO = 0;
+
+    size_t m_ResX = 10;
+    size_t m_ResY = 10;
+    size_t m_ResZ = 10;
+    bool m_Invalidated = true;
+
+public:
+    std::vector<VertexRGB> m_Points; /* Grid points */
+    std::vector<float> m_IsoValues; /* Corresponding iso values */
+
+    Grid(CloudModel& model) : m_ParentModel(model) {
+        glCreateVertexArrays(1, &m_VAO);
+        glCreateBuffers(1, &m_VBO);
+
+        // Setup vertex attributes for MC corner data
+        glEnableVertexArrayAttrib(m_VAO, 0);
+        glEnableVertexArrayAttrib(m_VAO, 1);
+        glVertexArrayAttribFormat(m_VAO, 0, 3, GL_FLOAT, GL_FALSE, offsetof(VertexRGB, pos));
+        glVertexArrayAttribFormat(m_VAO, 1, 3, GL_FLOAT, GL_FALSE, offsetof(VertexRGB, color));
+        glVertexArrayVertexBuffer(m_VAO, 0, m_VBO, 0, sizeof(VertexRGB));
+        glVertexArrayVertexBuffer(m_VAO, 1, m_VBO, 0, sizeof(VertexRGB));
+
+        Regenerate();
+    }
+
+    void Regenerate();
+
+    void CalculateIsoValues(size_t neighbourhoodSize);
+
+    void Draw(ProgramObject& shader, glm::mat4 pvm) const;
+
+    size_t GetResX() const { return m_ResX; }
+    size_t GetResY() const { return m_ResX; }
+    size_t GetResZ() const { return m_ResX; }
+
+    void SetResX(size_t value) { m_ResX = value; m_Invalidated = true; }
+    void SetResY(size_t value) { m_ResY = value; m_Invalidated = true; }
+    void SetResZ(size_t value) { m_ResZ = value; m_Invalidated = true; }
+};
+
+struct MarchingCube {
     // Indices of MC edge vertices in order
     // compatible with the edge and triangle table.
     // Used when computing positions of edge intersections
-    static constexpr std::array<size_t, 24> m_RelativeCornerIndices{
+    static constexpr std::array<size_t, 24> s_CornerIndices{
             0, 1,
             1, 2,
             2, 3,
@@ -76,13 +137,39 @@ class CloudModel {
             2, 6,
             3, 7
     };
+};
+
+
+struct HoppeParameters {
+};
+
+
+struct PairHash {
+public:
+    template <typename T, typename U>
+    std::size_t operator()(const std::pair<T, U> &x) const {
+        return std::hash<T>()(x.first) ^ std::hash<U>()(x.second);
+    }
+};
+
+
+class CloudModel {
+    friend class Grid;
+
+    pcl::PointCloud<pcl::PointNormal>::Ptr m_Cloud;
+    pcl::search::KdTree<pcl::PointNormal>::Ptr m_Tree;
+
+    std::vector<GLuint> m_MeshIndices;
+    std::vector<glm::vec3> m_MeshVertices;
+    std::vector<glm::vec3> m_CloudNormals;
+
+    /* Maps indices of two vertices forming an MC edge to an index of an interpolated edge vertex */
+    std::unordered_map<std::pair<size_t, size_t>, size_t, PairHash> m_VertexIndices;
 
     enum Buffers {
         Model,
-        Corners,
         InputPC,
         InputPCNormals,
-        Connections,
         BUFFER_COUNT
     };
 
@@ -96,28 +183,23 @@ class CloudModel {
     static ProgramObject s_ColorProgram;
 
 public:
-    int m_GridSizeX = 10;
-    int m_GridSizeY = 10;
-    int m_GridSizeZ = 10;
+    BoundingBox m_BB;
+    Grid m_Grid;
+
     bool m_ShowGrid = true;
-    bool m_InvalidatedGrid = false;
-    int m_ConnectionIdx = 0;
     bool m_ShowMesh = false;
     bool m_ShowInputPC = false;
     bool m_ShowNormals = false;
-    bool m_ShowConnections = false;
 
-    size_t GetCornerCount() { return m_CubeCorners.size(); }
+    size_t GetCornerCount() { return m_Grid.m_Points.size(); }
 
     CloudModel(pcl::PointCloud<pcl::PointNormal>::Ptr cloud, const std::string &shaderDir);
 
     void Draw(glm::mat4 pv, glm::vec3 color);
 
-    void RegenerateGrid();
+    void HoppeReconstruction(size_t neighbourhoodSize);
 
-    void CalculateIsoValues();
-
-    void Reconstruct();
+    void PCL_HoppeReconstruction(size_t neighbourhoodSize);
 };
 
 
