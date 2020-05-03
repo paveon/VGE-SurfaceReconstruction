@@ -112,13 +112,6 @@ enum Buffers {
     BUFFER_COUNT
 };
 
-enum class ReconstructionMethods {
-    ModifiedHoppe,
-    PCL_MarchingCubes,
-    PCL_Hoppe,
-    PCL_Poisson
-};
-
 
 int main(int /*argc*/, char ** /*argv*/) {
     int threadCount = omp_get_max_threads();
@@ -233,10 +226,9 @@ int main(int /*argc*/, char ** /*argv*/) {
             "Sphere"
     };
 
-    int currentMethod = (int) ReconstructionMethods::ModifiedHoppe;
-    std::array<const char *, 4> methodLabels{
+    int methodID = (int) ReconstructionMethod::ModifiedHoppe;
+    std::array<const char *, 3> methodLabels{
             "Modified Hoppe",
-            "PCL: Marching Cubes",
             "PCL: Hoppe's",
             "PCL: Poisson"
     };
@@ -270,10 +262,18 @@ int main(int /*argc*/, char ** /*argv*/) {
             gridResZ = models[currentModel].m_Grid.GetResZ();
         }
 
-        ImGui::Combo("Method", &currentMethod, methodLabels.data(), methodLabels.size());
+        ImGui::Combo("Method", &methodID, methodLabels.data(), methodLabels.size());
 
-        switch (static_cast<ReconstructionMethods>(currentMethod)) {
-            case ReconstructionMethods::ModifiedHoppe:
+        auto method = static_cast<ReconstructionMethod>(methodID);
+        if (ImGui::Button("Reconstruct"))
+            models[currentModel].Reconstruct(method);
+
+        switch (method) {
+            case ReconstructionMethod::PCL_Hoppe:
+                ImGui::SliderFloat("Ignore distance", &models[currentModel].m_IgnoreDistance, -1.0f, 1.0f);
+                ImGui::SliderFloat("Iso level", &models[currentModel].m_IsoLevel, -0.1f, 0.1f);
+
+            case ReconstructionMethod::ModifiedHoppe:
                 ImGui::Text("Grid resolution");
 
                 // Cannot merge due to short circuit || evaluation. Causes flickering
@@ -287,20 +287,23 @@ int main(int /*argc*/, char ** /*argv*/) {
                 if (ImGui::Button("Regenerate grid"))
                     models[currentModel].m_Grid.Regenerate();
 
-                ImGui::Text("Neighbourhood size");
-                ImGui::SliderInt("", &neighbourhoodSize, 1, 10);
-
-                if (ImGui::Button("Reconstruct"))
-                    models[currentModel].HoppeReconstruction(neighbourhoodSize);
+                if (method == ReconstructionMethod::ModifiedHoppe) {
+                    ImGui::Text("Neighbourhood size");
+                    if (ImGui::SliderInt("", &neighbourhoodSize, 1, 10)) {
+                        models[currentModel].m_NeighbourhoodSize = (size_t)neighbourhoodSize;
+                    }
+                }
                 break;
 
-            case ReconstructionMethods::PCL_Hoppe:
-                break;
-
-            case ReconstructionMethods::PCL_MarchingCubes:
-                break;
-
-            case ReconstructionMethods::PCL_Poisson:
+            case ReconstructionMethod::PCL_Poisson:
+                ImGui::SliderInt("Degree", &models[currentModel].m_Degree, 1, 5);
+                ImGui::SliderInt("Depth", &models[currentModel].m_Depth, 1, 10);
+                ImGui::SliderInt("Minimum depth", &models[currentModel].m_MinDepth, 1, 10);
+                ImGui::SliderInt("Iso divide", &models[currentModel].m_IsoDivide, 1, 16);
+                ImGui::SliderInt("Solver divide", &models[currentModel].m_SolverDivide, 1, 16);
+                ImGui::SliderFloat("Point weight", &models[currentModel].m_PointWeight, 1.0f, 10.0f);
+                ImGui::SliderFloat("Samples per node", &models[currentModel].m_SamplesPerNode, 1.0f, 10.0f);
+                ImGui::SliderFloat("Scale", &models[currentModel].m_Scale, 1.1f, 5.0f);
                 break;
         }
 

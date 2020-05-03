@@ -2,7 +2,9 @@
 #define CLOUD_MODEL_H
 
 #if defined(_OPENMP)
+
 #include <omp.h>
+
 #else
 void omp_set_num_threads (int);
 int omp_get_num_threads();
@@ -58,7 +60,7 @@ struct BoundingBox {
     Eigen::Vector4f max;
     Eigen::Vector4f size;
 
-    BoundingBox(pcl::PointCloud<pcl::PointNormal>::Ptr& cloud, float increase) {
+    BoundingBox(pcl::PointCloud<pcl::PointNormal>::Ptr &cloud, float increase) {
         pcl::getMinMax3D(*cloud, min, max);
         size = max - min;
         min -= (size * (increase / 2.0f));
@@ -76,7 +78,7 @@ struct BoundingBox {
 class CloudModel;
 
 class Grid {
-    CloudModel& m_ParentModel;
+    CloudModel &m_ParentModel;
     GLuint m_VAO = 0;
     GLuint m_VBO = 0;
 
@@ -89,7 +91,7 @@ public:
     std::vector<VertexRGB> m_Points; /* Grid points */
     std::vector<float> m_IsoValues; /* Corresponding iso values */
 
-    Grid(CloudModel& model) : m_ParentModel(model) {
+    Grid(CloudModel &model) : m_ParentModel(model) {
         glCreateVertexArrays(1, &m_VAO);
         glCreateBuffers(1, &m_VBO);
 
@@ -108,15 +110,28 @@ public:
 
     void CalculateIsoValues(size_t neighbourhoodSize);
 
-    void Draw(ProgramObject& shader, glm::mat4 pvm) const;
+    void Draw(ProgramObject &shader, glm::mat4 pvm) const;
 
     size_t GetResX() const { return m_ResX; }
+
     size_t GetResY() const { return m_ResX; }
+
     size_t GetResZ() const { return m_ResX; }
 
-    void SetResX(size_t value) { m_ResX = value; m_Invalidated = true; }
-    void SetResY(size_t value) { m_ResY = value; m_Invalidated = true; }
-    void SetResZ(size_t value) { m_ResZ = value; m_Invalidated = true; }
+    void SetResX(size_t value) {
+        m_ResX = value;
+        m_Invalidated = true;
+    }
+
+    void SetResY(size_t value) {
+        m_ResY = value;
+        m_Invalidated = true;
+    }
+
+    void SetResZ(size_t value) {
+        m_ResZ = value;
+        m_Invalidated = true;
+    }
 };
 
 struct MarchingCube {
@@ -146,10 +161,17 @@ struct HoppeParameters {
 
 struct PairHash {
 public:
-    template <typename T, typename U>
+    template<typename T, typename U>
     std::size_t operator()(const std::pair<T, U> &x) const {
         return std::hash<T>()(x.first) ^ std::hash<U>()(x.second);
     }
+};
+
+
+enum class ReconstructionMethod {
+    ModifiedHoppe,
+    PCL_Hoppe,
+    PCL_Poisson
 };
 
 
@@ -167,9 +189,9 @@ class CloudModel {
     std::unordered_map<std::pair<size_t, size_t>, size_t, PairHash> m_VertexIndices;
 
     enum Buffers {
-        Model,
-        InputPC,
-        InputPCNormals,
+        Mesh,
+        Cloud,
+        CloudNormals,
         BUFFER_COUNT
     };
 
@@ -182,24 +204,43 @@ class CloudModel {
     static ProgramObject s_GeometryProgram;
     static ProgramObject s_ColorProgram;
 
+    void BufferData();
+
+    void ExtractPclReconstructionData(const std::vector<pcl::Vertices> &outputIndices,
+                                      const pcl::PointCloud<pcl::PointNormal>::Ptr &surfacePoints);
+
+    void HoppeReconstruction();
+
+    void PCL_HoppeReconstruction();
+
+    void PCL_PoissonReconstruction();
+
 public:
     BoundingBox m_BB;
     Grid m_Grid;
+    float m_IsoLevel = 0.0f;
+    float m_IgnoreDistance = -1.0f;
+    size_t m_NeighbourhoodSize = 1;
+
+    int m_Degree = 2;
+    int m_Depth = 8;
+    int m_MinDepth = 5;
+    int m_IsoDivide = 8;
+    int m_SolverDivide = 8;
+    float m_PointWeight = 4.0f;
+    float m_SamplesPerNode = 1.0f;
+    float m_Scale = 1.1f;
 
     bool m_ShowGrid = true;
-    bool m_ShowMesh = false;
+    bool m_ShowMesh = true;
     bool m_ShowInputPC = false;
     bool m_ShowNormals = false;
-
-    size_t GetCornerCount() { return m_Grid.m_Points.size(); }
 
     CloudModel(pcl::PointCloud<pcl::PointNormal>::Ptr cloud, const std::string &shaderDir);
 
     void Draw(glm::mat4 pv, glm::vec3 color);
 
-    void HoppeReconstruction(size_t neighbourhoodSize);
-
-    void PCL_HoppeReconstruction(size_t neighbourhoodSize);
+    void Reconstruct(ReconstructionMethod method);
 };
 
 

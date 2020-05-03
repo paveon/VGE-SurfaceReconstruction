@@ -4,9 +4,12 @@
 #include <chrono>
 #include <pcl/common/pca.h>
 #include <pcl/surface/marching_cubes_hoppe.h>
+#include <pcl/surface/poisson.h>
 
 #if defined(_OPENMP)
+
 #include <omp.h>
+
 #else
 
 void omp_set_num_threads(int) {}
@@ -21,12 +24,25 @@ int omp_get_num_procs() { return 1; }
 
 #endif
 
+class ClockGuard {
+    std::chrono::time_point<std::chrono::steady_clock> m_Start;
+    const char* m_Name;
+
+public:
+    ClockGuard(const char* name) : m_Start(std::chrono::steady_clock::now()), m_Name(name) {}
+
+    ~ClockGuard() {
+        std::chrono::duration<double> elapsed_seconds = std::chrono::steady_clock::now() - m_Start;
+        std::cout << "[Timer] " << m_Name << ": " << elapsed_seconds.count() << "s" << std::endl;
+    }
+};
+
 
 void Grid::Regenerate() {
     if (!m_Invalidated)
         return;
 
-    auto start = std::chrono::steady_clock::now();
+    ClockGuard timer(__func__);
 
     const BoundingBox bb(m_ParentModel.m_BB);
     const float deltaX = bb.size.x() / (float) m_ResX;
@@ -61,14 +77,11 @@ void Grid::Regenerate() {
         glNamedBufferSubData(m_VBO, 0, sizeof(VertexRGB) * m_Points.size(), m_Points.data());
 
     m_Invalidated = false;
-
-    std::chrono::duration<double> elapsed_seconds = std::chrono::steady_clock::now() - start;
-    std::cout << "[Time] " << __func__ << ": " << elapsed_seconds.count() << "s" << std::endl;
 }
 
 
 void Grid::CalculateIsoValues(size_t neighbourhoodSize) {
-    auto start = std::chrono::steady_clock::now();
+    ClockGuard timer(__func__);
 
 #pragma omp parallel
     {
@@ -146,9 +159,6 @@ void Grid::CalculateIsoValues(size_t neighbourhoodSize) {
 
     // Update grid vertex data with colors
     glNamedBufferSubData(m_VBO, 0, sizeof(VertexRGB) * m_Points.size(), m_Points.data());
-
-    std::chrono::duration<double> elapsed_seconds = std::chrono::steady_clock::now() - start;
-    std::cout << "[Time] " << __func__ << ": " << elapsed_seconds.count() << "s" << std::endl;
 }
 
 
@@ -203,20 +213,20 @@ CloudModel::CloudModel(pcl::PointCloud<pcl::PointNormal>::Ptr cloud, const std::
                 cloudPt.z + cloudPt.normal_z * 0.2f
         );
     }
-    glNamedBufferData(m_VBOs[InputPCNormals], sizeof(glm::vec3) * m_CloudNormals.size(), m_CloudNormals.data(),
+    glNamedBufferData(m_VBOs[CloudNormals], sizeof(glm::vec3) * m_CloudNormals.size(), m_CloudNormals.data(),
                       GL_STATIC_DRAW);
-    glEnableVertexArrayAttrib(m_VAOs[InputPCNormals], 0);
-    glVertexArrayAttribFormat(m_VAOs[InputPCNormals], 0, 3, GL_FLOAT, GL_FALSE, 0);
-    glVertexArrayVertexBuffer(m_VAOs[InputPCNormals], 0, m_VBOs[InputPCNormals], 0, sizeof(glm::vec3));
+    glEnableVertexArrayAttrib(m_VAOs[CloudNormals], 0);
+    glVertexArrayAttribFormat(m_VAOs[CloudNormals], 0, 3, GL_FLOAT, GL_FALSE, 0);
+    glVertexArrayVertexBuffer(m_VAOs[CloudNormals], 0, m_VBOs[CloudNormals], 0, sizeof(glm::vec3));
 
-    glNamedBufferData(m_VBOs[InputPC], sizeof(pcl::PointNormal) * m_Cloud->points.size(), m_Cloud->points.data(),
+    glNamedBufferData(m_VBOs[Cloud], sizeof(pcl::PointNormal) * m_Cloud->points.size(), m_Cloud->points.data(),
                       GL_STATIC_DRAW);
-    glEnableVertexArrayAttrib(m_VAOs[InputPC], 0);
-    glEnableVertexArrayAttrib(m_VAOs[InputPC], 1);
-    glVertexArrayAttribFormat(m_VAOs[InputPC], 0, 3, GL_FLOAT, GL_FALSE, offsetof(pcl::PointNormal, data));
-    glVertexArrayAttribFormat(m_VAOs[InputPC], 1, 3, GL_FLOAT, GL_FALSE, offsetof(pcl::PointNormal, normal));
-    glVertexArrayVertexBuffer(m_VAOs[InputPC], 0, m_VBOs[InputPC], 0, sizeof(pcl::PointNormal));
-    glVertexArrayVertexBuffer(m_VAOs[InputPC], 1, m_VBOs[InputPC], 0, sizeof(pcl::PointNormal));
+    glEnableVertexArrayAttrib(m_VAOs[Cloud], 0);
+    glEnableVertexArrayAttrib(m_VAOs[Cloud], 1);
+    glVertexArrayAttribFormat(m_VAOs[Cloud], 0, 3, GL_FLOAT, GL_FALSE, offsetof(pcl::PointNormal, data));
+    glVertexArrayAttribFormat(m_VAOs[Cloud], 1, 3, GL_FLOAT, GL_FALSE, offsetof(pcl::PointNormal, normal));
+    glVertexArrayVertexBuffer(m_VAOs[Cloud], 0, m_VBOs[Cloud], 0, sizeof(pcl::PointNormal));
+    glVertexArrayVertexBuffer(m_VAOs[Cloud], 1, m_VBOs[Cloud], 0, sizeof(pcl::PointNormal));
 
     m_Grid.Regenerate();
 }
@@ -231,7 +241,7 @@ void CloudModel::Draw(glm::mat4 pv, glm::vec3 color) {
         s_MeshProgram.use();
         s_MeshProgram.set3fv("primitiveColor", glm::value_ptr(color));
         s_MeshProgram.setMatrix4fv("pvm", glm::value_ptr(pvm));
-        glBindVertexArray(m_VAOs[Model]);
+        glBindVertexArray(m_VAOs[Mesh]);
         glDrawElements(GL_TRIANGLES, m_MeshIndices.size(), GL_UNSIGNED_INT, nullptr);
 
         // Draw outlines of model triangles, it looks weird without illumination model otherwise
@@ -248,7 +258,7 @@ void CloudModel::Draw(glm::mat4 pv, glm::vec3 color) {
     if (m_ShowInputPC) {
         s_ShaderProgram.set3fv("primitiveColor", glm::value_ptr(color));
         glPointSize(3.0f);
-        glBindVertexArray(m_VAOs[InputPC]);
+        glBindVertexArray(m_VAOs[Cloud]);
         glDrawArrays(GL_POINTS, 0, m_Cloud->points.size());
         glPointSize(1.0f);
 
@@ -268,7 +278,7 @@ void CloudModel::Draw(glm::mat4 pv, glm::vec3 color) {
             s_GeometryProgram.set3fv("primitiveColor", glm::value_ptr(normalColor));
             s_GeometryProgram.setMatrix4fv("pvm", glm::value_ptr(pvm));
             glLineWidth(2.0f);
-            glBindVertexArray(m_VAOs[InputPC]);
+            glBindVertexArray(m_VAOs[Cloud]);
             glDrawArrays(GL_POINTS, 0, m_Cloud->points.size());
             glLineWidth(1.0f);
         }
@@ -280,11 +290,28 @@ void CloudModel::Draw(glm::mat4 pv, glm::vec3 color) {
 }
 
 
-void CloudModel::HoppeReconstruction(size_t neighbourhoodSize) {
-    auto start = std::chrono::steady_clock::now();
+void CloudModel::Reconstruct(ReconstructionMethod method) {
+    switch (method) {
+        case ReconstructionMethod::ModifiedHoppe:
+            HoppeReconstruction();
+            break;
+
+        case ReconstructionMethod::PCL_Hoppe:
+            PCL_HoppeReconstruction();
+            break;
+
+        case ReconstructionMethod::PCL_Poisson:
+            PCL_PoissonReconstruction();
+            break;
+    }
+}
+
+
+void CloudModel::HoppeReconstruction() {
+    ClockGuard timer(__func__);
 
     m_Grid.Regenerate();
-    m_Grid.CalculateIsoValues(neighbourhoodSize);
+    m_Grid.CalculateIsoValues(m_NeighbourhoodSize);
 
     m_VertexIndices.clear();
     m_VertexIndices.rehash(m_Grid.m_Points.size() * 1.25f);
@@ -293,17 +320,6 @@ void CloudModel::HoppeReconstruction(size_t neighbourhoodSize) {
 
     size_t zPointCount = m_Grid.GetResZ() + 1;
     size_t yzPointCount = (m_Grid.GetResY() + 1) * zPointCount;
-
-//#pragma omp parallel
-//    {
-//        int threadCount = omp_get_num_threads();
-//        int threadID = omp_get_thread_num();
-//        size_t chunkSize = m_Points.size() / threadCount;
-//        size_t startIdx = chunkSize * threadID;
-//        size_t endIdx = chunkSize * (threadID + 1);
-//        if (threadID == threadCount - 1)
-//            endIdx = m_Points.size();
-//    }
 
     std::array<GLuint, 12> intersections{};
     std::array<glm::vec3, 8> cubeCorners{};
@@ -352,7 +368,7 @@ void CloudModel::HoppeReconstruction(size_t neighbourhoodSize) {
                         }
 
                         bool found = false;
-                        #pragma omp critical(mapAccess)
+#pragma omp critical(mapAccess)
                         {
                             auto it = m_VertexIndices.find({absoluteIdx1, absoluteIdx2});
                             if (it != m_VertexIndices.end()) {
@@ -371,7 +387,7 @@ void CloudModel::HoppeReconstruction(size_t neighbourhoodSize) {
                             const float interpCoeff = (0 - l0) / (l1 - l0);
 
                             // New index
-                            #pragma omp critical(vertexEmit)
+#pragma omp critical(vertexEmit)
                             {
                                 intersections[i] = m_MeshVertices.size();
                                 // New vertex with the new index position
@@ -382,7 +398,7 @@ void CloudModel::HoppeReconstruction(size_t neighbourhoodSize) {
                                 );
                             }
 
-                            #pragma omp critical(mapAccess)
+#pragma omp critical(mapAccess)
                             m_VertexIndices[{absoluteIdx1, absoluteIdx2}] = intersections[i];
                         }
                     }
@@ -398,27 +414,73 @@ void CloudModel::HoppeReconstruction(size_t neighbourhoodSize) {
                             intersections[configTriangles[i + 2]]
                     };
 
-                    #pragma omp critical(indexEmit)
+#pragma omp critical(indexEmit)
                     m_MeshIndices.insert(m_MeshIndices.end(), triangleIndices.begin(), triangleIndices.end());
                 }
             }
         }
     }
 
-    // Buffer model vertex and index data and bind buffers to VAO
-    glNamedBufferData(m_VBOs[Model], sizeof(glm::vec3) * m_MeshVertices.size(), m_MeshVertices.data(), GL_STATIC_DRAW);
-    glNamedBufferData(m_EBOs[Model], sizeof(GLuint) * m_MeshIndices.size(), m_MeshIndices.data(), GL_STATIC_DRAW);
-    glVertexArrayElementBuffer(m_VAOs[Model], m_EBOs[Model]);
-    glEnableVertexArrayAttrib(m_VAOs[Model], 0);
-    glVertexArrayAttribFormat(m_VAOs[Model], 0, 3, GL_FLOAT, GL_FALSE, 0);
-    glVertexArrayVertexBuffer(m_VAOs[Model], 0, m_VBOs[Model], 0, sizeof(glm::vec3));
-
-    std::chrono::duration<double> elapsed_seconds = std::chrono::steady_clock::now() - start;
-    std::cout << "[Time] " << __func__ << ": " << elapsed_seconds.count() << "s" << std::endl;
+    BufferData();
 }
 
 
-void CloudModel::PCL_HoppeReconstruction(size_t neighbourhoodSize) {
+void CloudModel::BufferData() {
+    ClockGuard timer(__func__);
+
+    // Buffer model vertex and index data and bind buffers to VAO
+    glNamedBufferData(m_VBOs[Mesh], sizeof(glm::vec3) * m_MeshVertices.size(), m_MeshVertices.data(), GL_STATIC_DRAW);
+    glNamedBufferData(m_EBOs[Mesh], sizeof(GLuint) * m_MeshIndices.size(), m_MeshIndices.data(), GL_STATIC_DRAW);
+    glVertexArrayElementBuffer(m_VAOs[Mesh], m_EBOs[Mesh]);
+    glEnableVertexArrayAttrib(m_VAOs[Mesh], 0);
+    glVertexArrayAttribFormat(m_VAOs[Mesh], 0, 3, GL_FLOAT, GL_FALSE, 0);
+    glVertexArrayVertexBuffer(m_VAOs[Mesh], 0, m_VBOs[Mesh], 0, sizeof(glm::vec3));
+}
+
+
+void CloudModel::ExtractPclReconstructionData(const std::vector<pcl::Vertices> &outputIndices,
+                                              const pcl::PointCloud<pcl::PointNormal>::Ptr &surfacePoints) {
+    // Copy surface vertices
+    m_MeshVertices.clear();
+    m_MeshVertices.resize(surfacePoints->size());
+    for (size_t i = 0; i < surfacePoints->size(); ++i) {
+        memcpy(glm::value_ptr(m_MeshVertices[i]), surfacePoints->points[i].data, sizeof(float) * 3);
+    }
+
+    // PCL uses weird memory layout for indices, copy the data
+    // into new vector with flat layout so that it can be used by OpenGL
+    size_t idx = 0;
+    m_MeshIndices.clear();
+    m_MeshIndices.resize(outputIndices.size() * 3);
+    for (size_t i = 0; i < outputIndices.size(); i++) {
+        const auto &indices = outputIndices[i];
+        for (size_t index : indices.vertices)
+            m_MeshIndices[idx++] = index;
+    }
+}
+
+
+void CloudModel::PCL_HoppeReconstruction() {
+    m_Grid.Regenerate();
+
+    ClockGuard timer(__func__);
+
+    // Reconstruction
+    pcl::MarchingCubesHoppe<pcl::PointNormal> hoppe;
+    hoppe.setInputCloud(m_Cloud);
+    hoppe.setPercentageExtendGrid(0.1f);
+    hoppe.setGridResolution(m_Grid.GetResX(), m_Grid.GetResY(), m_Grid.GetResZ());
+    hoppe.setSearchMethod(m_Tree);
+    hoppe.setIsoLevel(m_IsoLevel);
+    hoppe.setDistanceIgnore(m_IgnoreDistance);
+
+    std::vector<pcl::Vertices> outputIndices;
+    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(new pcl::PointCloud<pcl::PointNormal>());
+    hoppe.reconstruct(*surfaceCloud, outputIndices);
+
+    ExtractPclReconstructionData(outputIndices, surfaceCloud);
+    BufferData();
+
     // TODO: Move to CloudModel later on
     // std::vector<GLuint> flatIndices;
     // pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(new pcl::PointCloud<pcl::PointNormal>());
@@ -442,28 +504,6 @@ void CloudModel::PCL_HoppeReconstruction(size_t neighbourhoodSize) {
 //        // else
 //        //     cloud_point_normals = bunnyWithNormals();
 //
-//        // pcl::Poisson<pcl::PointNormal> poisson;
-//        // poisson.setDepth(6); // Was painfully slow with depth of 12
-//        // poisson.setInputCloud(cloud_point_normals);
-//
-//        std::vector<pcl::Vertices> outputIndices;
-//
-//        // Reconstruction
-//        pcl::MarchingCubesHoppe<pcl::PointNormal> hoppe;
-//        hoppe.setInputCloud(cloud_point_normals);
-//        hoppe.setGridResolution(40, 40, 40);
-//        hoppe.reconstruct(*surfaceCloud, outputIndices);
-//        poisson.reconstruct(*surfaceCloud, outputIndices);
-//
-//        // PCL uses weird memory layout for indices, copy the data
-//        // into new vector with flat layout so that it can be used by OpenGL
-//        size_t idx = 0;
-//        flatIndices.resize(outputIndices.size() * 3);
-//        for (size_t i = 0; i < outputIndices.size(); i++) {
-//            const auto &indices = outputIndices[i];
-//            for (size_t index : indices.vertices)
-//                flatIndices[idx++] = index;
-//        }
 //
 //        // Save cache
 //        pcl::io::savePCDFileASCII("surface_cache.pcd", *surfaceCloud);
@@ -473,6 +513,31 @@ void CloudModel::PCL_HoppeReconstruction(size_t neighbourhoodSize) {
 //        cacheFile.write((char *) flatIndices.data(), cacheSize * sizeof(GLuint));
 //        cacheFile.close();
 //    }
+}
+
+
+void CloudModel::PCL_PoissonReconstruction() {
+    ClockGuard timer(__func__);
+
+    // Reconstruction
+    pcl::Poisson<pcl::PointNormal> poisson;
+    poisson.setInputCloud(m_Cloud);
+    poisson.setSearchMethod(m_Tree);
+    poisson.setDegree(m_Degree);
+    poisson.setDepth(m_Depth);
+    poisson.setMinDepth(m_MinDepth);
+    poisson.setIsoDivide(m_IsoDivide);
+    poisson.setSolverDivide(m_SolverDivide);
+    poisson.setPointWeight(m_PointWeight);
+    poisson.setSamplesPerNode(m_SamplesPerNode);
+    poisson.setScale(m_Scale);
+
+    std::vector<pcl::Vertices> outputIndices;
+    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(new pcl::PointCloud<pcl::PointNormal>());
+    poisson.reconstruct(*surfaceCloud, outputIndices);
+
+    ExtractPclReconstructionData(outputIndices, surfaceCloud);
+    BufferData();
 }
 
 
