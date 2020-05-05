@@ -13,6 +13,7 @@
 #include <pcl/surface/poisson.h>
 #include <pcl/surface/gp3.h>
 #include <Eigen/Dense>
+#include "MLS_helper_functions.cpp"
 
 #if defined(_OPENMP)
 
@@ -107,7 +108,7 @@ void Grid::CalculateIsoValues(size_t neighbourhoodSize) {
 
 #pragma omp parallel
     {
-        pcl::IndicesPtr indices(pcl::make_shared<std::vector<int>>());
+        pcl::IndicesPtr indices(new std::vector<int>);
         indices->resize(neighbourhoodSize);
         std::vector<float> distances(neighbourhoodSize);
 
@@ -203,7 +204,7 @@ void Grid::Draw(ProgramObject &shader, glm::mat4 pvm) const {
 CloudModel::CloudModel(const std::string& name, pcl::PointCloud<pcl::PointNormal>::Ptr cloud, const std::string &shaderDir) :
         m_Name(name),
         m_Cloud(std::move(cloud)),
-        m_Tree(pcl::make_shared<pcl::search::KdTree<pcl::PointNormal>>()),
+        m_Tree(new pcl::search::KdTree<pcl::PointNormal>()),
         m_BB(m_Cloud, 0.1f),
         m_Grid(*this) {
 
@@ -599,7 +600,8 @@ void Grid::CalculateIsoValuesMLS(size_t neighbourhoodSize) {
 
     std::vector<float> k_sqr_distances;
     std::vector<float> _closest_k_sqr_distances;
-    unsigned degree = 4;
+    unsigned degree = neighbourhoodSize > 10 ? 3 : neighbourhoodSize > 5 ? 2 : 1;
+    size_t mat_size = (degree == 3) ? 9 : ((degree == 2) ? 6 : 3);
     ClockGuard timer(__func__);
 
     size_t startIdx = 0;
@@ -618,192 +620,85 @@ void Grid::CalculateIsoValuesMLS(size_t neighbourhoodSize) {
         Eigen::VectorXd x_s(found);
         Eigen::VectorXd y_s(found);
         Eigen::VectorXd z_s(found);
+        Eigen::VectorXd x_m(found);
+        Eigen::VectorXd y_m(found);
+        Eigen::VectorXd z_m(found);
         float sums2[3] = {0,0,0};
         float sums[3] = {0,0,0};
         for (size_t _i = 0; _i < indices->size(); _i++) {
             float _x = m_ParentModel.m_Cloud->at(indices->at(_i)).x;
             x_s[_i] = _x;
+            x_m[_i] = m_ParentModel.m_Cloud->at(indices->at(_i)).normal_x;
             sums2[0] += pow(_x,2);
             sums[0] += _x;
 
             float _y = m_ParentModel.m_Cloud->at(indices->at(_i)).y;
             y_s[_i] = _y;
+            y_m[_i] = m_ParentModel.m_Cloud->at(indices->at(_i)).normal_y;
             sums2[1] += pow(_y,2);
             sums[1] += _y;
 
             float _z = m_ParentModel.m_Cloud->at(indices->at(_i)).z;
             z_s[_i] = _z;
+            z_m[_i] = m_ParentModel.m_Cloud->at(indices->at(_i)).normal_z;
             sums2[2] += pow(_z,2);
             sums[2] += _z;
         }
-        /*std::cout << "found: " << found << std::endl;
-            std::cout << "mat_y: " << mat_y << std::endl;
-            std::cout << "x_s: " << x_s << std::endl;
-            std::cout << "y_s: " << y_s << std::endl;
-            std::cout << "coeffs: " << coeffs_y << std::endl;*/
-
 
         double vars[3] = {sums2[0]/found - pow(sums[0]/found, 2),sums2[1]/found - pow(sums[1]/found, 2),sums2[2]/found - pow(sums[2]/found, 2)};
         /* polynom order + 1 -> second argument of mat constructor */
         auto pseudoinverse = [](Eigen::MatrixXd mat) { return (mat.transpose() * mat).inverse() * mat.transpose(); };
-        auto _f = [](Eigen::MatrixXd coeffs, double x) { return
-                                                         coeffs(0,0) +
-                                                         coeffs(1,0) * x +
-                                                         coeffs(2,0) * pow(x,2) +
-                                                         coeffs(3,0) * pow(x,3); };
-        auto _f_2d = [](Eigen::MatrixXd coeffs, double x_1, double x_2) { return
-                                                                          coeffs(0,0) +
-                                                                          coeffs(1,0) * x_1 +
-                                                                          coeffs(2,0) * x_2 +
-                                                                          coeffs(3,0) * x_1 * x_2 +
-                                                                          coeffs(4,0) * pow(x_1,2) +
-                                                                          coeffs(5,0) * pow(x_2,2) +
-                                                                          coeffs(6,0) * pow(x_1,2) * pow(x_2,2) +
-                                                                          coeffs(7,0) * pow(x_1,3) +
-                                                                          coeffs(8,0) * pow(x_2,3); };
-        auto mat1d = [](Eigen::MatrixXd& mat, int r, const Eigen::VectorXd& x){return mat.row(r) << 1, x[r], x[r] * x[r] , x[r]*x[r]*x[r];};
-        auto mat2d = [](Eigen::MatrixXd& mat, int r, const Eigen::VectorXd& x_1, const Eigen::VectorXd& x_2){return mat.row(r) <<
-                                                                                                             1,
-                                                                                                             x_1[r],
-                                                                                                             x_2[r],
-                                                                                                             x_1[r]*x_2[r],
-                                                                                                             pow(x_1[r],2) ,
-                                                                                                             pow(x_2[r], 2),
-                                                                                                             pow(x_1[r],2) * pow(x_2[r], 2),
-                                                                                                             pow(x_1[r], 3),
-                                                                                                             pow(x_2[r], 3);};
-        auto dist2d = [](float p, float inter, float dist){return (p - inter) * exp(-dist);};
+        auto dist2d = [](float p, float inter, float dist) { return (p - inter) * exp(-dist); };
+        void (*mat2d)(Eigen::MatrixXd &mat, int r, const Eigen::VectorXd &x_1, const Eigen::VectorXd &x_2);
+        float (*_f_2d)(Eigen::MatrixXd coeffs, float x_1, float x_2);
+        if (degree == 3) {
+            mat2d = &mat2d_3;
+            _f_2d = &_f_2d_3;
+        } else if (degree == 2) {
+            mat2d = &mat2d_2;
+            _f_2d = &_f_2d_2;
+        }
+        else if (degree == 1) {
+            mat2d = &mat2d_1;
+            _f_2d = &_f_2d_1;
+        } else
+            std::cerr << "unsupported degree of polynom: " << degree << std::endl;
         /* now decide which coordinate will be result and which base for function approximation */
-        /*std::cout << "vars: " << sums2[0]/found - pow(sums[0]/found, 2) << " " << vars[1] << " " << vars[2] << std::endl;
-        std::cout << "sums: " << sums[0] << " " << sums[1] << " " << sums[2] << std::endl;
-        std::cout << "sums2: " << sums2[0] << " " << sums2[1] << " " << sums2[2] << std::endl;*/
-        if(true){
-        if (vars[0] < vars[1] && vars[0] < vars[2]){
+        if (vars[0] < vars[1] && vars[0] < vars[2]) {
             /* x is y */
             /* approximate f(y, z) = x */
-            Eigen::MatrixXd mat_yz(found, degree*2 +1);
+            Eigen::MatrixXd mat_yz(found, mat_size);
             for (int _i = 0; _i < found; _i++){
                 mat2d(mat_yz, _i, y_s, z_s);
             }
+            /* fit data */
             Eigen::MatrixXd coeffs_yz = pseudoinverse(mat_yz) * x_s;
-            //std::cout << "f: " << _f_2d(coeffs_yz, gridPoint.y, gridPoint.z) << std::endl;
-            //std::cout << "x: " << gridPoint.x << std::endl;
-            distance = (dist2d(closest_point.x - closest_point.normal_x, _f_2d(coeffs_yz, closest_point.y, closest_point.z), 1) < 0 ? 1 : -1 ) *
-                        dist2d(gridPoint.x, _f_2d(coeffs_yz, gridPoint.y, gridPoint.z), _closest_k_sqr_distances.at(0));
-            //std::cout << "d: " << distance << std::endl;
-            //gridVertex.color = distance <= 0 ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
+            /* compute distance */
+            distance = (dist2d(gridPoint.x - x_m.mean(), _f_2d(coeffs_yz, closest_point.y, closest_point.z), 1) < dist2d(gridPoint.x, _f_2d(coeffs_yz, closest_point.y, closest_point.z), 1) ? 1 : -1 ) *
+                           dist2d(gridPoint.x, _f_2d(coeffs_yz, gridPoint.y, gridPoint.z), _closest_k_sqr_distances.at(0));
+
         } else if (vars[1] < vars[0] && vars[1] < vars[2]) {
             /* y is y */
             /* approximate f(x, z) = y */
-            Eigen::MatrixXd mat_xz(found, degree*2 +1);
+            Eigen::MatrixXd mat_xz(found, mat_size);
             for (int _i = 0; _i < found; _i++){
                 mat2d(mat_xz, _i, x_s, z_s);
             }
             Eigen::MatrixXd coeffs_xz = pseudoinverse(mat_xz) * y_s;
-            distance = (dist2d(closest_point.y - closest_point.normal_y, _f_2d(coeffs_xz, closest_point.x, closest_point.z), 1) < 0 ? 1 : -1 ) *
+            distance = (dist2d(gridPoint.y - y_m.mean(), _f_2d(coeffs_xz, closest_point.x, closest_point.z), 1) < dist2d(gridPoint.y, _f_2d(coeffs_xz, closest_point.x, closest_point.z), 1) ? 1 : -1 ) *
                         dist2d(gridPoint.y, _f_2d(coeffs_xz, gridPoint.x, gridPoint.z), _closest_k_sqr_distances.at(0));
         } else {
             /* z is y */
             /* approximate f(x, y) = z */
-            Eigen::MatrixXd mat_xy(found, degree*2+1);
+            Eigen::MatrixXd mat_xy(found, mat_size);
             for (int _i = 0; _i < found; _i++){
                 mat2d(mat_xy, _i, x_s, y_s);
             }
             Eigen::MatrixXd coeffs_xy = pseudoinverse(mat_xy) * z_s;
-            distance = (dist2d(closest_point.z - closest_point.normal_z, _f_2d(coeffs_xy, closest_point.x, closest_point.y), 1) < 0 ? 1 : -1 ) *
+            distance = (dist2d(gridPoint.z - z_m.mean(), _f_2d(coeffs_xy, closest_point.x, closest_point.y), 1) < dist2d(gridPoint.z, _f_2d(coeffs_xy, closest_point.x, closest_point.y), 1) ? 1 : -1 ) *
                         dist2d(gridPoint.z, _f_2d(coeffs_xy, gridPoint.x, gridPoint.y), _closest_k_sqr_distances.at(0));
         }
-
-        } else {
-        if (vars[0] > vars[1] && vars[0] > vars[2]){
-            /* x is y */
-            /* approximate f(y) = x */
-            Eigen::MatrixXd mat_y(found, degree);
-            for (int _i = 0; _i < found; _i++){
-                mat1d(mat_y, _i, y_s);
-            }
-            Eigen::MatrixXd coeffs_y = pseudoinverse(mat_y) * x_s;
-            /* approximate f(z) = x */
-            Eigen::MatrixXd mat_z(found, degree);
-            for (int _i = 0; _i < found; _i++){
-                mat1d(mat_z, _i, z_s);
-            }
-            std::cout << "found: " << found << std::endl;
-            std::cout << "mat_y: " << mat_y << std::endl;
-            std::cout << "x_s: " << x_s << std::endl;
-            std::cout << "y_s: " << y_s << std::endl;
-            std::cout << "coeffs: " << coeffs_y << std::endl;
-            Eigen::MatrixXd coeffs_z = pseudoinverse(mat_z) * x_s;
-            distance = (2*gridPoint.x - _f(coeffs_y, gridPoint.y) - _f(coeffs_z, gridPoint.z))/2;
-        } else if (vars[1] > vars[0] && vars[1] > vars[2]) {
-            /* y is y */
-            /* approximate f(x) = y */
-            Eigen::MatrixXd mat_x(found, degree);
-            for (int _i = 0; _i < found; _i++){
-                mat1d(mat_x, _i, x_s);
-            }
-            Eigen::MatrixXd coeffs_x = pseudoinverse(mat_x) * y_s;
-
-            /* approximate f(z) = y */
-            Eigen::MatrixXd mat_z(found, degree);
-            for (int _i = 0; _i < found; _i++){
-                mat1d(mat_z, _i, z_s);
-            }
-            Eigen::MatrixXd coeffs_z = pseudoinverse(mat_z) * y_s;
-            distance = (2*gridPoint.y - _f(coeffs_x, gridPoint.x) - _f(coeffs_z, gridPoint.z))/2;
-        } else {
-            /* z is y */
-            /* approximate f(x) = z */
-            Eigen::MatrixXd mat_x(found, degree);
-            for (int _i = 0; _i < found; _i++){
-                mat1d(mat_x, _i, x_s);
-            }
-            Eigen::MatrixXd coeffs_x = pseudoinverse(mat_x) * z_s;
-            /* approximate f(y) = z */
-            Eigen::MatrixXd mat_y(found, degree);
-            for (int _i = 0; _i < found; _i++){
-                mat1d(mat_y, _i, y_s);
-            }
-            Eigen::MatrixXd coeffs_y = pseudoinverse(mat_y) * z_s;
-            distance = (2*gridPoint.z - _f(coeffs_x, gridPoint.x) - _f(coeffs_y, gridPoint.y))/2;
-        }}
         // smallest variance is variable
-
-
-
-        if (neighbourhoodSize > 1) {/*
-            for (size_t vectorIdx = 0; vectorIdx < 3; vectorIdx++) {
-                auto eigenVector(eigenVectors.col(vectorIdx));
-                eigenVector.normalize();
-
-                float dotProduct = nearestPoint.getNormalVector3fMap().dot(eigenVector);
-                if (std::abs(dotProduct) >= max) {
-                    max = dotProduct;
-
-                    // Resulting normal (eigen vector) might be incorrectly oriented. Original
-                    // paper deals with this by using complex algorithm which traverses Riemannian
-                    // graph and consistently orients normals of connected tangent planes.
-                    // We'll use a hack and orient the normal based on the orientation of the closest point
-                    normal = glm::vec3(eigenVector.x(), eigenVector.y(), eigenVector.z());
-                    if (max < 0) {
-                        max = -max;
-                        normal = -normal;
-                    }
-                }
-            }
-
-            glm::vec3 direction(gridVertex.pos - centroidVertex);
-            distance = glm::dot(direction, glm::normalize(normal));*/
-        } else {
-            pcl::PointNormal nearestPoint = m_ParentModel.m_Cloud->points[indices->front()];
-
-            // Calculate the distance between the MC corner point and the tangent
-            // plane of the closest surface point. Dot projection of the point2point
-            // vector and the unit-length surface normal gives us the distance.
-            auto direction = gridPoint.getVector3fMap() - nearestPoint.getVector3fMap();
-            distance = nearestPoint.getNormalVector3fMap().dot(direction);
-        }
-
         m_IsoValues[i] = distance;
 
         // Red color for corner points outside the geometry and green for points that are inside
@@ -864,7 +759,7 @@ double CloudModel::PCL_HoppeReconstruction() {
     hoppe.setIsoLevel(m_IsoLevel);
 
     std::vector<pcl::Vertices> outputIndices;
-    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(pcl::make_shared<pcl::PointCloud<pcl::PointNormal>>());
+    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(new pcl::PointCloud<pcl::PointNormal>());
     hoppe.reconstruct(*surfaceCloud, outputIndices);
 
     ExtractPclReconstructionData(outputIndices, surfaceCloud);
@@ -888,7 +783,7 @@ double CloudModel::PCL_MC_RBF_Reconstruction() {
     rbf.setOffSurfaceDisplacement(m_OffSurfaceDisplacement);
 
     std::vector<pcl::Vertices> outputIndices;
-    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(pcl::make_shared<pcl::PointCloud<pcl::PointNormal>>());
+    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(new pcl::PointCloud<pcl::PointNormal>());
     rbf.reconstruct(*surfaceCloud, outputIndices);
 
     ExtractPclReconstructionData(outputIndices, surfaceCloud);
@@ -913,7 +808,7 @@ double CloudModel::PCL_PoissonReconstruction() {
     poisson.setScale(m_Scale);
 
     std::vector<pcl::Vertices> outputIndices;
-    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(pcl::make_shared<pcl::PointCloud<pcl::PointNormal>>());
+    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(new pcl::PointCloud<pcl::PointNormal>());
     poisson.reconstruct(*surfaceCloud, outputIndices);
 
     ExtractPclReconstructionData(outputIndices, surfaceCloud);
@@ -932,7 +827,7 @@ double CloudModel::PCL_ConcaveHullReconstruction() {
     hull.setAlpha(m_Alpha);
 
     std::vector<pcl::Vertices> outputIndices;
-    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(pcl::make_shared<pcl::PointCloud<pcl::PointNormal>>());
+    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(new pcl::PointCloud<pcl::PointNormal>());
     hull.reconstruct(*surfaceCloud, outputIndices);
 
     ExtractPclReconstructionData(outputIndices, surfaceCloud);
@@ -949,7 +844,7 @@ double CloudModel::PCL_ConvexHullReconstruction() {
     hull.setSearchMethod(m_Tree);
 
     std::vector<pcl::Vertices> outputIndices;
-    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(pcl::make_shared<pcl::PointCloud<pcl::PointNormal>>());
+    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(new pcl::PointCloud<pcl::PointNormal>());
     hull.reconstruct(*surfaceCloud, outputIndices);
 
     ExtractPclReconstructionData(outputIndices, surfaceCloud);
