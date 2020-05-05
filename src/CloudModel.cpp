@@ -6,6 +6,7 @@
 #include <pcl/surface/marching_cubes_hoppe.h>
 #include <pcl/surface/poisson.h>
 #include <Eigen/Dense>
+#include "MLS_helper_functions.cpp"
 
 #if defined(_OPENMP)
 
@@ -555,7 +556,8 @@ void Grid::CalculateIsoValuesMLS(size_t neighbourhoodSize) {
 
     std::vector<float> k_sqr_distances;
     std::vector<float> _closest_k_sqr_distances;
-    unsigned degree = 4;
+    unsigned degree = neighbourhoodSize > 9 ? 3 : neighbourhoodSize > 5 ? 2 : 1;
+    size_t mat_size = (degree == 3) ? 9 : ((degree == 2) ? 6 : 3);
     ClockGuard timer(__func__);
 
     size_t startIdx = 0;
@@ -592,66 +594,43 @@ void Grid::CalculateIsoValuesMLS(size_t neighbourhoodSize) {
             sums2[2] += pow(_z,2);
             sums[2] += _z;
         }
-        /*std::cout << "found: " << found << std::endl;
-            std::cout << "mat_y: " << mat_y << std::endl;
-            std::cout << "x_s: " << x_s << std::endl;
-            std::cout << "y_s: " << y_s << std::endl;
-            std::cout << "coeffs: " << coeffs_y << std::endl;*/
-
 
         double vars[3] = {sums2[0]/found - pow(sums[0]/found, 2),sums2[1]/found - pow(sums[1]/found, 2),sums2[2]/found - pow(sums[2]/found, 2)};
         /* polynom order + 1 -> second argument of mat constructor */
         auto pseudoinverse = [](Eigen::MatrixXd mat) { return (mat.transpose() * mat).inverse() * mat.transpose(); };
-        auto _f = [](Eigen::MatrixXd coeffs, double x) { return
-                                                         coeffs(0,0) +
-                                                         coeffs(1,0) * x +
-                                                         coeffs(2,0) * pow(x,2) +
-                                                         coeffs(3,0) * pow(x,3); };
-        auto _f_2d = [](Eigen::MatrixXd coeffs, double x_1, double x_2) { return
-                                                                          coeffs(0,0) +
-                                                                          coeffs(1,0) * x_1 +
-                                                                          coeffs(2,0) * x_2 +
-                                                                          coeffs(3,0) * x_1 * x_2 +
-                                                                          coeffs(4,0) * pow(x_1,2) +
-                                                                          coeffs(5,0) * pow(x_2,2) +
-                                                                          coeffs(6,0) * pow(x_1,2) * pow(x_2,2) +
-                                                                          coeffs(7,0) * pow(x_1,3) +
-                                                                          coeffs(8,0) * pow(x_2,3); };
-        auto mat1d = [](Eigen::MatrixXd& mat, int r, const Eigen::VectorXd& x){return mat.row(r) << 1, x[r], x[r] * x[r] , x[r]*x[r]*x[r];};
-        auto mat2d = [](Eigen::MatrixXd& mat, int r, const Eigen::VectorXd& x_1, const Eigen::VectorXd& x_2){return mat.row(r) <<
-                                                                                                             1,
-                                                                                                             x_1[r],
-                                                                                                             x_2[r],
-                                                                                                             x_1[r]*x_2[r],
-                                                                                                             pow(x_1[r],2) ,
-                                                                                                             pow(x_2[r], 2),
-                                                                                                             pow(x_1[r],2) * pow(x_2[r], 2),
-                                                                                                             pow(x_1[r], 3),
-                                                                                                             pow(x_2[r], 3);};
-        auto dist2d = [](float p, float inter, float dist){return (p - inter) * exp(-dist);};
+        auto dist2d = [](float p, float inter, float dist) { return (p - inter) * exp(-dist); };
+        void (*mat2d)(Eigen::MatrixXd &mat, int r, const Eigen::VectorXd &x_1, const Eigen::VectorXd &x_2);
+        float (*_f_2d)(Eigen::MatrixXd coeffs, float x_1, float x_2);
+        if (degree == 3) {
+            mat2d = &mat2d_3;
+            _f_2d = &_f_2d_3;
+        } else if (degree == 2) {
+            mat2d = &mat2d_2;
+            _f_2d = &_f_2d_2;
+        }
+        else if (degree == 1) {
+            mat2d = &mat2d_1;
+            _f_2d = &_f_2d_1;
+        } else
+            std::cerr << "unsupported degree of polynom: " << degree << std::endl;
         /* now decide which coordinate will be result and which base for function approximation */
-        /*std::cout << "vars: " << sums2[0]/found - pow(sums[0]/found, 2) << " " << vars[1] << " " << vars[2] << std::endl;
-        std::cout << "sums: " << sums[0] << " " << sums[1] << " " << sums[2] << std::endl;
-        std::cout << "sums2: " << sums2[0] << " " << sums2[1] << " " << sums2[2] << std::endl;*/
-        if(true){
-        if (vars[0] < vars[1] && vars[0] < vars[2]){
+        if (vars[0] < vars[1] && vars[0] < vars[2]) {
             /* x is y */
             /* approximate f(y, z) = x */
-            Eigen::MatrixXd mat_yz(found, degree*2 +1);
+            Eigen::MatrixXd mat_yz(found, mat_size);
             for (int _i = 0; _i < found; _i++){
                 mat2d(mat_yz, _i, y_s, z_s);
             }
+            /* fit data */
             Eigen::MatrixXd coeffs_yz = pseudoinverse(mat_yz) * x_s;
-            //std::cout << "f: " << _f_2d(coeffs_yz, gridPoint.y, gridPoint.z) << std::endl;
-            //std::cout << "x: " << gridPoint.x << std::endl;
+            /* compute distance */
             distance = (dist2d(closest_point.x - closest_point.normal_x, _f_2d(coeffs_yz, closest_point.y, closest_point.z), 1) < 0 ? 1 : -1 ) *
-                        dist2d(gridPoint.x, _f_2d(coeffs_yz, gridPoint.y, gridPoint.z), _closest_k_sqr_distances.at(0));
-            //std::cout << "d: " << distance << std::endl;
-            //gridVertex.color = distance <= 0 ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
+                           dist2d(gridPoint.x, _f_2d(coeffs_yz, gridPoint.y, gridPoint.z), _closest_k_sqr_distances.at(0));
+
         } else if (vars[1] < vars[0] && vars[1] < vars[2]) {
             /* y is y */
             /* approximate f(x, z) = y */
-            Eigen::MatrixXd mat_xz(found, degree*2 +1);
+            Eigen::MatrixXd mat_xz(found, mat_size);
             for (int _i = 0; _i < found; _i++){
                 mat2d(mat_xz, _i, x_s, z_s);
             }
@@ -661,7 +640,7 @@ void Grid::CalculateIsoValuesMLS(size_t neighbourhoodSize) {
         } else {
             /* z is y */
             /* approximate f(x, y) = z */
-            Eigen::MatrixXd mat_xy(found, degree*2+1);
+            Eigen::MatrixXd mat_xy(found, mat_size);
             for (int _i = 0; _i < found; _i++){
                 mat2d(mat_xy, _i, x_s, y_s);
             }
@@ -669,60 +648,6 @@ void Grid::CalculateIsoValuesMLS(size_t neighbourhoodSize) {
             distance = (dist2d(closest_point.z - closest_point.normal_z, _f_2d(coeffs_xy, closest_point.x, closest_point.y), 1) < 0 ? 1 : -1 ) *
                         dist2d(gridPoint.z, _f_2d(coeffs_xy, gridPoint.x, gridPoint.y), _closest_k_sqr_distances.at(0));
         }
-
-        } else {
-        if (vars[0] > vars[1] && vars[0] > vars[2]){
-            /* x is y */
-            /* approximate f(y) = x */
-            Eigen::MatrixXd mat_y(found, degree);
-            for (int _i = 0; _i < found; _i++){
-                mat1d(mat_y, _i, y_s);
-            }
-            Eigen::MatrixXd coeffs_y = pseudoinverse(mat_y) * x_s;
-            /* approximate f(z) = x */
-            Eigen::MatrixXd mat_z(found, degree);
-            for (int _i = 0; _i < found; _i++){
-                mat1d(mat_z, _i, z_s);
-            }
-            std::cout << "found: " << found << std::endl;
-            std::cout << "mat_y: " << mat_y << std::endl;
-            std::cout << "x_s: " << x_s << std::endl;
-            std::cout << "y_s: " << y_s << std::endl;
-            std::cout << "coeffs: " << coeffs_y << std::endl;
-            Eigen::MatrixXd coeffs_z = pseudoinverse(mat_z) * x_s;
-            distance = (2*gridPoint.x - _f(coeffs_y, gridPoint.y) - _f(coeffs_z, gridPoint.z))/2;
-        } else if (vars[1] > vars[0] && vars[1] > vars[2]) {
-            /* y is y */
-            /* approximate f(x) = y */
-            Eigen::MatrixXd mat_x(found, degree);
-            for (int _i = 0; _i < found; _i++){
-                mat1d(mat_x, _i, x_s);
-            }
-            Eigen::MatrixXd coeffs_x = pseudoinverse(mat_x) * y_s;
-
-            /* approximate f(z) = y */
-            Eigen::MatrixXd mat_z(found, degree);
-            for (int _i = 0; _i < found; _i++){
-                mat1d(mat_z, _i, z_s);
-            }
-            Eigen::MatrixXd coeffs_z = pseudoinverse(mat_z) * y_s;
-            distance = (2*gridPoint.y - _f(coeffs_x, gridPoint.x) - _f(coeffs_z, gridPoint.z))/2;
-        } else {
-            /* z is y */
-            /* approximate f(x) = z */
-            Eigen::MatrixXd mat_x(found, degree);
-            for (int _i = 0; _i < found; _i++){
-                mat1d(mat_x, _i, x_s);
-            }
-            Eigen::MatrixXd coeffs_x = pseudoinverse(mat_x) * z_s;
-            /* approximate f(y) = z */
-            Eigen::MatrixXd mat_y(found, degree);
-            for (int _i = 0; _i < found; _i++){
-                mat1d(mat_y, _i, y_s);
-            }
-            Eigen::MatrixXd coeffs_y = pseudoinverse(mat_y) * z_s;
-            distance = (2*gridPoint.z - _f(coeffs_x, gridPoint.x) - _f(coeffs_y, gridPoint.y))/2;
-        }}
         // smallest variance is variable
 
 
