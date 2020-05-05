@@ -110,6 +110,8 @@ public:
 
     void CalculateIsoValues(size_t neighbourhoodSize);
 
+    void CalculateIsoValuesMLS(size_t neighbourhoodSize);
+
     void Draw(ProgramObject &shader, glm::mat4 pvm) const;
 
     size_t GetResX() const { return m_ResX; }
@@ -170,6 +172,7 @@ public:
 
 enum class ReconstructionMethod {
     ModifiedHoppe,
+    MLS,
     PCL_Hoppe,
     PCL_Poisson
 };
@@ -212,6 +215,8 @@ class CloudModel {
     void HoppeReconstruction();
 
     void PCL_HoppeReconstruction();
+
+    void MLSReconstruction();
 
     void PCL_PoissonReconstruction();
 

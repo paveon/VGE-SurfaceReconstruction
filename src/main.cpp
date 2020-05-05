@@ -227,8 +227,9 @@ int main(int /*argc*/, char ** /*argv*/) {
     };
 
     int methodID = (int) ReconstructionMethod::ModifiedHoppe;
-    std::array<const char *, 3> methodLabels{
+    std::array<const char *, 4> methodLabels{
             "Modified Hoppe",
+            "MLS",
             "PCL: Hoppe's",
             "PCL: Poisson"
     };
@@ -294,6 +295,28 @@ int main(int /*argc*/, char ** /*argv*/) {
                     }
                 }
                 break;
+            case ReconstructionMethod::MLS:
+                ImGui::Text("Grid resolution");
+
+                // Cannot merge due to short circuit || evaluation. Causes flickering
+                // when moving the slider because the render command is skipped
+                if (ImGui::SliderInt("X", &gridResX, 5, 100))
+                    models[currentModel].m_Grid.SetResX(gridResX);
+                if (ImGui::SliderInt("Y", &gridResY, 5, 100))
+                    models[currentModel].m_Grid.SetResY(gridResY);
+                if (ImGui::SliderInt("Z", &gridResZ, 5, 100))
+                    models[currentModel].m_Grid.SetResZ(gridResZ);
+                if (ImGui::Button("Regenerate grid"))
+                    models[currentModel].m_Grid.Regenerate();
+
+                if (method == ReconstructionMethod::ModifiedHoppe || method == ReconstructionMethod::MLS) {
+                    ImGui::Text("Neighbourhood size");
+                    if (ImGui::SliderInt("", &neighbourhoodSize, 1, 25)) {
+                        models[currentModel].m_NeighbourhoodSize = (size_t)neighbourhoodSize;
+                    }
+                }
+                break;
+
 
             case ReconstructionMethod::PCL_Poisson:
                 ImGui::SliderInt("Degree", &models[currentModel].m_Degree, 1, 5);

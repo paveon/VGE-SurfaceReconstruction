@@ -5,6 +5,7 @@
 #include <pcl/common/pca.h>
 #include <pcl/surface/marching_cubes_hoppe.h>
 #include <pcl/surface/poisson.h>
+#include <Eigen/Dense>
 
 #if defined(_OPENMP)
 
@@ -85,7 +86,7 @@ void Grid::CalculateIsoValues(size_t neighbourhoodSize) {
 
 #pragma omp parallel
     {
-        pcl::IndicesPtr indices(new pcl::Indices());
+        pcl::IndicesPtr indices(new std::vector<int>);
         indices->resize(neighbourhoodSize);
         std::vector<float> distances(neighbourhoodSize);
 
@@ -295,6 +296,9 @@ void CloudModel::Reconstruct(ReconstructionMethod method) {
         case ReconstructionMethod::ModifiedHoppe:
             HoppeReconstruction();
             break;
+        case ReconstructionMethod::MLS:
+            MLSReconstruction();
+            break;
 
         case ReconstructionMethod::PCL_Hoppe:
             PCL_HoppeReconstruction();
@@ -422,6 +426,348 @@ void CloudModel::HoppeReconstruction() {
     }
 
     BufferData();
+}
+
+void CloudModel::MLSReconstruction() {
+    ClockGuard timer(__func__);
+
+    m_Grid.Regenerate();
+
+
+    m_Grid.CalculateIsoValuesMLS(m_NeighbourhoodSize);
+
+    m_VertexIndices.clear();
+    m_VertexIndices.rehash(m_Grid.m_Points.size() * 1.25f);
+    m_MeshVertices.clear();
+    m_MeshIndices.clear();
+
+    size_t zPointCount = m_Grid.GetResZ() + 1;
+    size_t yzPointCount = (m_Grid.GetResY() + 1) * zPointCount;
+
+    std::array<GLuint, 12> intersections{};
+    std::array<glm::vec3, 8> cubeCorners{};
+    std::array<float, 8> isoValues{};
+
+#pragma omp parallel for schedule(static) firstprivate(intersections, cubeCorners, isoValues, zPointCount, yzPointCount) shared(edgeTable, triangleTable)
+    for (size_t x = 0; x < m_Grid.GetResX(); ++x) {
+        for (size_t y = 0; y < m_Grid.GetResY(); ++y) {
+            for (size_t z = 0; z < m_Grid.GetResZ(); ++z) {
+                std::array<size_t, 8> gridCornerIndices{
+                        z + (y * zPointCount) + (x * yzPointCount),
+                        1 + z + (y * zPointCount) + (x * yzPointCount),
+                        1 + z + ((y + 1) * zPointCount) + (x * yzPointCount),
+                        z + ((y + 1) * zPointCount) + (x * yzPointCount),
+
+                        z + (y * zPointCount) + ((x + 1) * yzPointCount),
+                        1 + z + (y * zPointCount) + ((x + 1) * yzPointCount),
+                        1 + z + ((y + 1) * zPointCount) + ((x + 1) * yzPointCount),
+                        z + ((y + 1) * zPointCount) + ((x + 1) * yzPointCount)
+                };
+
+                for (size_t i = 0; i < cubeCorners.size(); ++i) {
+                    cubeCorners[i] = m_Grid.m_Points[gridCornerIndices[i]].pos;
+                    isoValues[i] = m_Grid.m_IsoValues[gridCornerIndices[i]];
+                }
+
+                uint32_t cubeIdx = 0;
+                for (size_t i = 0; i < cubeCorners.size(); ++i)
+                    cubeIdx |= unsigned(isoValues[i] < 0) << i;
+
+                /* Cube is entirely in/out of the surface */
+                if (cubeIdx == 0 || cubeIdx == 255)
+                    continue;
+
+                // Find the vertices where the surface intersects the cube
+                uint32_t cubeConfig = edgeTable[cubeIdx];
+                for (size_t i = 0; i < intersections.size(); ++i) {
+                    if (cubeConfig & (1u << i)) {
+                        size_t relativeIdx1 = MarchingCube::s_CornerIndices[i * 2];
+                        size_t relativeIdx2 = MarchingCube::s_CornerIndices[i * 2 + 1];
+                        size_t absoluteIdx1 = gridCornerIndices[relativeIdx1] - 1;
+                        size_t absoluteIdx2 = gridCornerIndices[relativeIdx2] - 1;
+                        if (absoluteIdx2 < absoluteIdx1) {
+                            // We want unique identifier of an edge
+                            std::swap(absoluteIdx1, absoluteIdx2);
+                        }
+
+                        bool found = false;
+#pragma omp critical(mapAccess)
+                        {
+                            auto it = m_VertexIndices.find({absoluteIdx1, absoluteIdx2});
+                            if (it != m_VertexIndices.end()) {
+                                // Interpolated edge vertex was already computed, retrieve its index
+                                found = true;
+                                intersections[i] = it->second;
+                            }
+                        }
+
+                        if (!found) {
+                            // Edge vertex doesn't exist yet. Compute it and store index
+                            const glm::vec3 &p1(cubeCorners[relativeIdx1]);
+                            const glm::vec3 &p2(cubeCorners[relativeIdx2]);
+                            float l0 = isoValues[relativeIdx1];
+                            float l1 = isoValues[relativeIdx2];
+                            const float interpCoeff = (0 - l0) / (l1 - l0);
+
+                            // New index
+#pragma omp critical(vertexEmit)
+                            {
+                                intersections[i] = m_MeshVertices.size();
+                                // New vertex with the new index position
+                                m_MeshVertices.emplace_back(
+                                        p1.x * (1.0f - interpCoeff) + p2.x * interpCoeff,
+                                        p1.y * (1.0f - interpCoeff) + p2.y * interpCoeff,
+                                        p1.z * (1.0f - interpCoeff) + p2.z * interpCoeff
+                                );
+                            }
+
+#pragma omp critical(mapAccess)
+                            m_VertexIndices[{absoluteIdx1, absoluteIdx2}] = intersections[i];
+                        }
+                    }
+                }
+
+                // Assemble triangles
+                const int8_t *configTriangles = &triangleTable[cubeIdx][0];
+                std::array<GLuint, 3> triangleIndices{};
+                for (size_t i = 0; configTriangles[i] != -1; i += 3) {
+                    triangleIndices = {
+                            intersections[configTriangles[i]],
+                            intersections[configTriangles[i + 1]],
+                            intersections[configTriangles[i + 2]]
+                    };
+
+#pragma omp critical(indexEmit)
+                    m_MeshIndices.insert(m_MeshIndices.end(), triangleIndices.begin(), triangleIndices.end());
+                }
+            }
+        }
+    }
+
+    BufferData();
+}
+
+void Grid::CalculateIsoValuesMLS(size_t neighbourhoodSize) {
+    pcl::IndicesPtr indices(new std::vector<int>);
+    indices->resize(neighbourhoodSize);
+    pcl::IndicesPtr _closest_ind(new std::vector<int>);
+    _closest_ind->resize(1);
+
+    std::vector<float> k_sqr_distances;
+    std::vector<float> _closest_k_sqr_distances;
+    unsigned degree = 4;
+    ClockGuard timer(__func__);
+
+    size_t startIdx = 0;
+    size_t endIdx = m_Points.size();
+
+    for (size_t i = startIdx; i < endIdx; ++i) {
+        float distance = 0.0f;
+        VertexRGB &gridVertex(m_Points[i]);
+        pcl::PointNormal gridPoint;
+        std::memcpy(gridPoint.data, glm::value_ptr(gridVertex.pos), sizeof(float) * 3);
+
+        m_ParentModel.m_Tree->nearestKSearch(gridPoint, 1, *_closest_ind, _closest_k_sqr_distances);
+        pcl::PointNormal closest_point = m_ParentModel.m_Cloud->at(_closest_ind->at(0));
+        int found = m_ParentModel.m_Tree->nearestKSearch(gridPoint, neighbourhoodSize, *indices, k_sqr_distances);
+        assert((size_t) found == neighbourhoodSize);
+        Eigen::VectorXd x_s(found);
+        Eigen::VectorXd y_s(found);
+        Eigen::VectorXd z_s(found);
+        float sums2[3] = {0,0,0};
+        float sums[3] = {0,0,0};
+        for (size_t _i = 0; _i < indices->size(); _i++) {
+            float _x = m_ParentModel.m_Cloud->at(indices->at(_i)).x;
+            x_s[_i] = _x;
+            sums2[0] += pow(_x,2);
+            sums[0] += _x;
+
+            float _y = m_ParentModel.m_Cloud->at(indices->at(_i)).y;
+            y_s[_i] = _y;
+            sums2[1] += pow(_y,2);
+            sums[1] += _y;
+
+            float _z = m_ParentModel.m_Cloud->at(indices->at(_i)).z;
+            z_s[_i] = _z;
+            sums2[2] += pow(_z,2);
+            sums[2] += _z;
+        }
+        /*std::cout << "found: " << found << std::endl;
+            std::cout << "mat_y: " << mat_y << std::endl;
+            std::cout << "x_s: " << x_s << std::endl;
+            std::cout << "y_s: " << y_s << std::endl;
+            std::cout << "coeffs: " << coeffs_y << std::endl;*/
+
+
+        double vars[3] = {sums2[0]/found - pow(sums[0]/found, 2),sums2[1]/found - pow(sums[1]/found, 2),sums2[2]/found - pow(sums[2]/found, 2)};
+        /* polynom order + 1 -> second argument of mat constructor */
+        auto pseudoinverse = [](Eigen::MatrixXd mat) { return (mat.transpose() * mat).inverse() * mat.transpose(); };
+        auto _f = [](Eigen::MatrixXd coeffs, double x) { return
+                                                         coeffs(0,0) +
+                                                         coeffs(1,0) * x +
+                                                         coeffs(2,0) * pow(x,2) +
+                                                         coeffs(3,0) * pow(x,3); };
+        auto _f_2d = [](Eigen::MatrixXd coeffs, double x_1, double x_2) { return
+                                                                          coeffs(0,0) +
+                                                                          coeffs(1,0) * x_1 +
+                                                                          coeffs(2,0) * x_2 +
+                                                                          coeffs(3,0) * x_1 * x_2 +
+                                                                          coeffs(4,0) * pow(x_1,2) +
+                                                                          coeffs(5,0) * pow(x_2,2) +
+                                                                          coeffs(6,0) * pow(x_1,2) * pow(x_2,2) +
+                                                                          coeffs(7,0) * pow(x_1,3) +
+                                                                          coeffs(8,0) * pow(x_2,3); };
+        auto mat1d = [](Eigen::MatrixXd& mat, int r, const Eigen::VectorXd& x){return mat.row(r) << 1, x[r], x[r] * x[r] , x[r]*x[r]*x[r];};
+        auto mat2d = [](Eigen::MatrixXd& mat, int r, const Eigen::VectorXd& x_1, const Eigen::VectorXd& x_2){return mat.row(r) <<
+                                                                                                             1,
+                                                                                                             x_1[r],
+                                                                                                             x_2[r],
+                                                                                                             x_1[r]*x_2[r],
+                                                                                                             pow(x_1[r],2) ,
+                                                                                                             pow(x_2[r], 2),
+                                                                                                             pow(x_1[r],2) * pow(x_2[r], 2),
+                                                                                                             pow(x_1[r], 3),
+                                                                                                             pow(x_2[r], 3);};
+        auto dist2d = [](float p, float inter, float dist){return (p - inter) * exp(-dist);};
+        /* now decide which coordinate will be result and which base for function approximation */
+        /*std::cout << "vars: " << sums2[0]/found - pow(sums[0]/found, 2) << " " << vars[1] << " " << vars[2] << std::endl;
+        std::cout << "sums: " << sums[0] << " " << sums[1] << " " << sums[2] << std::endl;
+        std::cout << "sums2: " << sums2[0] << " " << sums2[1] << " " << sums2[2] << std::endl;*/
+        if(true){
+        if (vars[0] < vars[1] && vars[0] < vars[2]){
+            /* x is y */
+            /* approximate f(y, z) = x */
+            Eigen::MatrixXd mat_yz(found, degree*2 +1);
+            for (int _i = 0; _i < found; _i++){
+                mat2d(mat_yz, _i, y_s, z_s);
+            }
+            Eigen::MatrixXd coeffs_yz = pseudoinverse(mat_yz) * x_s;
+            //std::cout << "f: " << _f_2d(coeffs_yz, gridPoint.y, gridPoint.z) << std::endl;
+            //std::cout << "x: " << gridPoint.x << std::endl;
+            distance = (dist2d(closest_point.x - closest_point.normal_x, _f_2d(coeffs_yz, closest_point.y, closest_point.z), 1) < 0 ? 1 : -1 ) *
+                        dist2d(gridPoint.x, _f_2d(coeffs_yz, gridPoint.y, gridPoint.z), _closest_k_sqr_distances.at(0));
+            //std::cout << "d: " << distance << std::endl;
+            //gridVertex.color = distance <= 0 ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
+        } else if (vars[1] < vars[0] && vars[1] < vars[2]) {
+            /* y is y */
+            /* approximate f(x, z) = y */
+            Eigen::MatrixXd mat_xz(found, degree*2 +1);
+            for (int _i = 0; _i < found; _i++){
+                mat2d(mat_xz, _i, x_s, z_s);
+            }
+            Eigen::MatrixXd coeffs_xz = pseudoinverse(mat_xz) * y_s;
+            distance = (dist2d(closest_point.y - closest_point.normal_y, _f_2d(coeffs_xz, closest_point.x, closest_point.z), 1) < 0 ? 1 : -1 ) *
+                        dist2d(gridPoint.y, _f_2d(coeffs_xz, gridPoint.x, gridPoint.z), _closest_k_sqr_distances.at(0));
+        } else {
+            /* z is y */
+            /* approximate f(x, y) = z */
+            Eigen::MatrixXd mat_xy(found, degree*2+1);
+            for (int _i = 0; _i < found; _i++){
+                mat2d(mat_xy, _i, x_s, y_s);
+            }
+            Eigen::MatrixXd coeffs_xy = pseudoinverse(mat_xy) * z_s;
+            distance = (dist2d(closest_point.z - closest_point.normal_z, _f_2d(coeffs_xy, closest_point.x, closest_point.y), 1) < 0 ? 1 : -1 ) *
+                        dist2d(gridPoint.z, _f_2d(coeffs_xy, gridPoint.x, gridPoint.y), _closest_k_sqr_distances.at(0));
+        }
+
+        } else {
+        if (vars[0] > vars[1] && vars[0] > vars[2]){
+            /* x is y */
+            /* approximate f(y) = x */
+            Eigen::MatrixXd mat_y(found, degree);
+            for (int _i = 0; _i < found; _i++){
+                mat1d(mat_y, _i, y_s);
+            }
+            Eigen::MatrixXd coeffs_y = pseudoinverse(mat_y) * x_s;
+            /* approximate f(z) = x */
+            Eigen::MatrixXd mat_z(found, degree);
+            for (int _i = 0; _i < found; _i++){
+                mat1d(mat_z, _i, z_s);
+            }
+            std::cout << "found: " << found << std::endl;
+            std::cout << "mat_y: " << mat_y << std::endl;
+            std::cout << "x_s: " << x_s << std::endl;
+            std::cout << "y_s: " << y_s << std::endl;
+            std::cout << "coeffs: " << coeffs_y << std::endl;
+            Eigen::MatrixXd coeffs_z = pseudoinverse(mat_z) * x_s;
+            distance = (2*gridPoint.x - _f(coeffs_y, gridPoint.y) - _f(coeffs_z, gridPoint.z))/2;
+        } else if (vars[1] > vars[0] && vars[1] > vars[2]) {
+            /* y is y */
+            /* approximate f(x) = y */
+            Eigen::MatrixXd mat_x(found, degree);
+            for (int _i = 0; _i < found; _i++){
+                mat1d(mat_x, _i, x_s);
+            }
+            Eigen::MatrixXd coeffs_x = pseudoinverse(mat_x) * y_s;
+
+            /* approximate f(z) = y */
+            Eigen::MatrixXd mat_z(found, degree);
+            for (int _i = 0; _i < found; _i++){
+                mat1d(mat_z, _i, z_s);
+            }
+            Eigen::MatrixXd coeffs_z = pseudoinverse(mat_z) * y_s;
+            distance = (2*gridPoint.y - _f(coeffs_x, gridPoint.x) - _f(coeffs_z, gridPoint.z))/2;
+        } else {
+            /* z is y */
+            /* approximate f(x) = z */
+            Eigen::MatrixXd mat_x(found, degree);
+            for (int _i = 0; _i < found; _i++){
+                mat1d(mat_x, _i, x_s);
+            }
+            Eigen::MatrixXd coeffs_x = pseudoinverse(mat_x) * z_s;
+            /* approximate f(y) = z */
+            Eigen::MatrixXd mat_y(found, degree);
+            for (int _i = 0; _i < found; _i++){
+                mat1d(mat_y, _i, y_s);
+            }
+            Eigen::MatrixXd coeffs_y = pseudoinverse(mat_y) * z_s;
+            distance = (2*gridPoint.z - _f(coeffs_x, gridPoint.x) - _f(coeffs_y, gridPoint.y))/2;
+        }}
+        // smallest variance is variable
+
+
+
+        if (neighbourhoodSize > 1) {/*
+            for (size_t vectorIdx = 0; vectorIdx < 3; vectorIdx++) {
+                auto eigenVector(eigenVectors.col(vectorIdx));
+                eigenVector.normalize();
+
+                float dotProduct = nearestPoint.getNormalVector3fMap().dot(eigenVector);
+                if (std::abs(dotProduct) >= max) {
+                    max = dotProduct;
+
+                    // Resulting normal (eigen vector) might be incorrectly oriented. Original
+                    // paper deals with this by using complex algorithm which traverses Riemannian
+                    // graph and consistently orients normals of connected tangent planes.
+                    // We'll use a hack and orient the normal based on the orientation of the closest point
+                    normal = glm::vec3(eigenVector.x(), eigenVector.y(), eigenVector.z());
+                    if (max < 0) {
+                        max = -max;
+                        normal = -normal;
+                    }
+                }
+            }
+
+            glm::vec3 direction(gridVertex.pos - centroidVertex);
+            distance = glm::dot(direction, glm::normalize(normal));*/
+        } else {
+            pcl::PointNormal nearestPoint = m_ParentModel.m_Cloud->points[indices->front()];
+
+            // Calculate the distance between the MC corner point and the tangent
+            // plane of the closest surface point. Dot projection of the point2point
+            // vector and the unit-length surface normal gives us the distance.
+            auto direction = gridPoint.getVector3fMap() - nearestPoint.getVector3fMap();
+            distance = nearestPoint.getNormalVector3fMap().dot(direction);
+        }
+
+        m_IsoValues[i] = distance;
+
+        // Red color for corner points outside the geometry and green for points that are inside
+        gridVertex.color = distance <= 0 ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
+    }
+
+    // Update grid vertex data with colors
+    glNamedBufferSubData(m_VBO, 0, sizeof(VertexRGB) * m_Points.size(), m_Points.data());
 }
 
 
