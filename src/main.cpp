@@ -287,6 +287,22 @@ int main(int /*argc*/, char ** /*argv*/) {
         };
 
         switch (method) {
+            case ReconstructionMethod::ModifiedHoppe:
+                ImGui::Text("Neighbourhood size");
+                if (ImGui::SliderInt("", &neighbourhoodSize, 1, 10))
+                    models[currentModel].m_NeighbourhoodSize = (size_t)neighbourhoodSize;
+
+                renderGridGUI();
+                break;
+
+            case ReconstructionMethod::MLS:
+                ImGui::Text("Neighbourhood size");
+                if (ImGui::SliderInt("", &neighbourhoodSize, 1, 25))
+                    models[currentModel].m_NeighbourhoodSize = (size_t)neighbourhoodSize;
+
+                renderGridGUI();
+                break;
+
             case ReconstructionMethod::PCL_Hoppe:
                 ImGui::SliderFloat("Iso level", &models[currentModel].m_IsoLevel, 0.0f, 1.0f);
                 renderGridGUI();
@@ -296,14 +312,6 @@ int main(int /*argc*/, char ** /*argv*/) {
                 ImGui::Text("Off surface displacement");
                 ImGui::SliderFloat("", &models[currentModel].m_OffSurfaceDisplacement, 0.0f, 1.0f);
                 ImGui::SliderFloat("Iso level", &models[currentModel].m_IsoLevel, 0.0f, 1.0f);
-                renderGridGUI();
-                break;
-
-            case ReconstructionMethod::ModifiedHoppe:
-                ImGui::Text("Neighbourhood size");
-                if (ImGui::SliderInt("", &neighbourhoodSize, 1, 10))
-                    models[currentModel].m_NeighbourhoodSize = (size_t)neighbourhoodSize;
-                
                 renderGridGUI();
                 break;
 
@@ -321,7 +329,7 @@ int main(int /*argc*/, char ** /*argv*/) {
                 ImGui::SliderFloat("Alpha", &models[currentModel].m_Alpha, 0.00001f, 0.2f);
                 break;
 
-            case ReconstructionMethod::PCL_ConvexHull: 
+            case ReconstructionMethod::PCL_ConvexHull:
                 break;
 
             case ReconstructionMethod::PCL_GreedyProjectionTriangulation:

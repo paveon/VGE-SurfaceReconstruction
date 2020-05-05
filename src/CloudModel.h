@@ -109,7 +109,7 @@ struct BoundingBox {
             max,
             min + glm::vec3(0.0f, size.y, size.z),
         };
-        
+
 
         glCreateVertexArrays(1, &m_VAO);
         glCreateBuffers(1, &m_VBO);
@@ -167,6 +167,8 @@ public:
 
     void CalculateIsoValues(size_t neighbourhoodSize);
 
+    void CalculateIsoValuesMLS(size_t neighbourhoodSize);
+
     void Draw(ProgramObject &shader, glm::mat4 pvm) const;
 
     size_t GetResX() const { return m_ResX; }
@@ -207,6 +209,7 @@ public:
 
 enum class ReconstructionMethod {
     ModifiedHoppe,
+    MLS,
     PCL_Hoppe,
     PCL_MarchingCubesRBF,
     PCL_Poisson,
@@ -216,8 +219,9 @@ enum class ReconstructionMethod {
     PCL_OrganizedFastMesh
 };
 
-static std::array<const char *, 8> s_MethodLabels{
+static std::array<const char *, 9> s_MethodLabels{
         "Modified Hoppe's",
+        "MLS",
         "PCL: Hoppe's",
         "PCL: Marching Cubes RBF",
         "PCL: Poisson",
@@ -266,6 +270,8 @@ class CloudModel {
                                       const pcl::PointCloud<pcl::PointNormal>::Ptr &surfacePoints);
 
     double HoppeReconstruction();
+
+    double MLSReconstruction();
 
     double PCL_HoppeReconstruction();
 
