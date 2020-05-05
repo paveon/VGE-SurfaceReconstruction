@@ -115,7 +115,7 @@ pcl::PointCloud<pcl::PointNormal>::Ptr loadModel(std::string modelPath) {
         pcl::NormalEstimation<pcl::PointNormal, pcl::Normal> normalEstimation;
         tree->setInputCloud(cloud);
 
-        pcl::IndicesPtr kIndices(pcl::make_shared<std::vector<int>>());
+        pcl::IndicesPtr kIndices(new std::vector<int>());
         kIndices->resize(5);
         std::vector<float> kDistances(5);
 
