@@ -6,15 +6,18 @@
 // #include <pcl/common/vector_average.h>
 // #include <pcl/Vertices.h>
 // #include <pcl/common/common_headers.h>
-// #include <pcl/features/normal_3d.h>
+#include <pcl/features/normal_3d.h>
+#include <pcl/conversions.h>
 
 // #include <pcl/visualization/pcl_visualizer.h>
 // #include <pcl/features/normal_3d.h>
 // #include <pcl/search/impl/search.hpp>
 
 #include <pcl/common/common.h>
+#include <pcl/common/transforms.h>
 #include <pcl/point_types.h>
 #include <pcl/io/pcd_io.h>
+#include <pcl/io/ply_io.h>
 
 #include <BaseApp.h>
 #include <Loader.h>
@@ -26,6 +29,7 @@
 
 
 static std::string g_ShaderFolder;
+static std::string g_ModelFolder;
 
 static const std::array<VertexRGB, 34> g_CoordVertices{
         VertexRGB(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
@@ -66,81 +70,61 @@ static const std::array<VertexRGB, 34> g_CoordVertices{
 };
 
 
-// void show(const pcl::PolygonMesh &mesh)
-// {
-//     // --------------------------------------------
-//     // -----Open 3D viewer and add point cloud-----
-//     // --------------------------------------------
-//     pcl::visualization::PCLVisualizer::Ptr viewer(new pcl::visualization::PCLVisualizer("3D Viewer"));
-//     viewer->setBackgroundColor(0, 0, 0);
-//     viewer->setCameraPosition(0, 0, 0, 0, 0, 0);
-//     viewer->addPolygonMesh(mesh);
-//     viewer->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 1, "sample cloud");
-//     viewer->addCoordinateSystem(1.0);
-//     viewer->initCameraParameters();
-//     while (!viewer->wasStopped())
-//     {
-//         viewer->spinOnce(100);
-//         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-//     }
-// }
-
-// pcl::PointCloud<pcl::Normal>::Ptr compute_normals(const pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud)
-// {
-//     pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> *ne = new pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal>;
-//     ne->setInputCloud(cloud);
-
-//     // Create an empty kdtree representation, and pass it to the normal estimation object.
-//     // Its content will be filled inside the object, based on the given input dataset (as no other search surface is given).
-//     pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>());
-//     ne->setSearchMethod(tree);
-
-//     // Output datasets
-//     pcl::PointCloud<pcl::Normal>::Ptr cloud_normals(new pcl::PointCloud<pcl::Normal>);
-
-//     // Use all neighbors in a sphere of radius 3cm
-//     ne->setRadiusSearch(0.3);
-
-//     // Compute the features
-//     ne->compute(*cloud_normals);
-//     return cloud_normals;
-// }
-
 enum Buffers {
     Ray,
     Coord,
     BUFFER_COUNT
 };
 
+pcl::PointCloud<pcl::PointNormal>::Ptr normalizeCloud(pcl::PointCloud<pcl::PointNormal>::Ptr cloud)
+{
+    float increase = 0.1f;
+    Eigen::Vector4f min, max;
+    pcl::getMinMax3D(*cloud, min, max);
+    Eigen::Vector4f size = max - min;
+    min -= (size * (increase / 2.0f));
+    max += (size * (increase / 2.0f));
+    size *= (1.0f + increase);
+
+    float scaleFactor = 1.0f / size.x();
+    pcl::PointCloud<pcl::PointNormal>::Ptr normalized(new pcl::PointCloud<pcl::PointNormal>());
+    Eigen::Affine3f transform(Eigen::Translation3f(-min.x(), -min.y(), -min.z()));
+    Eigen::Matrix4f matrix = transform.matrix() * scaleFactor;
+    pcl::transformPointCloud(*cloud, *normalized, matrix);
+
+    return normalized;
+}
+
+
+pcl::PointCloud<pcl::PointNormal>::Ptr loadModel(std::string modelPath) {
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>());
+    pcl::PLYReader reader;
+    std::string filepath(g_ModelFolder + modelPath);
+
+    std::cout << "Loading ply file: " << filepath << std::endl;
+    if (pcl::io::loadPLYFile(filepath, *cloud) != -1) {
+        pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> normalEstimation;
+        pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>());
+        pcl::PointCloud<pcl::Normal>::Ptr cloudNormals(new pcl::PointCloud<pcl::Normal>());
+
+        normalEstimation.setInputCloud(cloud);
+        normalEstimation.setSearchMethod(tree);
+        normalEstimation.setKSearch(5);
+        // normalEstimation.setRadiusSearch(0.03); // Use all neighbors in a sphere of radius 3cm
+        normalEstimation.compute(*cloudNormals); // Compute the features
+
+        pcl::PointCloud<pcl::PointNormal>::Ptr result(new pcl::PointCloud<pcl::PointNormal>());
+        pcl::concatenateFields(*cloud, *cloudNormals, *result);
+
+        return result;
+    }
+    throw std::runtime_error("Model could not be loaded");
+}
+
 
 int main(int /*argc*/, char ** /*argv*/) {
     int threadCount = omp_get_max_threads();
-//    omp_set_num_threads
-//    omp_get_thread_num
-//    omp_get_num_threads
     std::cout << "[Thread count] " << threadCount << std::endl;
-
-    // Simple caching system for later (we might want to display multiple models during presentation?)
-    // std::ifstream indexCache("index_cache.dat", std::ios::in | std::ios::binary);
-    // if (false && pcl::io::loadPCDFile<pcl::PointNormal>("surface_cache.pcd", *surfaceCloud) >= 0 && indexCache.is_open())
-    // {
-    //     // Cache exists
-    //     size_t cacheSize;
-    //     indexCache.read((char *)&cacheSize, sizeof(size_t));
-    //     flatIndices.resize(cacheSize);
-    //     indexCache.read((char *)flatIndices.data(), cacheSize * sizeof(GLuint));
-    // }
-    // else
-    // {
-    //     // Save cache
-    //     pcl::io::savePCDFileASCII("surface_cache.pcd", *surfaceCloud);
-    //     std::ofstream cacheFile("index_cache.dat", std::ios::out | std::ios::binary);
-    //     size_t cacheSize = flatIndices.size();
-    //     cacheFile.write((char *)&cacheSize, sizeof(size_t));
-    //     cacheFile.write((char *)flatIndices.data(), cacheSize * sizeof(GLuint));
-    //     cacheFile.close();
-    // }
-    // show(mesh);
 
     BaseApp app;
     PerspectiveCamera cam;
@@ -150,11 +134,35 @@ int main(int /*argc*/, char ** /*argv*/) {
     manipulator.setupCallbacks(app);
 
     g_ShaderFolder = app.getResourceDir() + "Shaders/";
+    g_ModelFolder = app.getResourceDir() + "Models/";
 
-    std::array<CloudModel, 2> models{
-            CloudModel(bunnyCloud(), g_ShaderFolder),
-            CloudModel(sphereCloud(0.5f), g_ShaderFolder)
+    std::array<CloudModel, 15> models{
+            CloudModel("Bunny", normalizeCloud(bunnyCloud()), g_ShaderFolder),
+            CloudModel("Sphere", normalizeCloud(sphereCloud(0.5f)), g_ShaderFolder),
+
+            CloudModel("Bunny 3.0 MB", normalizeCloud(loadModel("bunny/bun_zipper.ply")), g_ShaderFolder),
+            CloudModel("Bunny 0.7 MB", normalizeCloud(loadModel("bunny/bun_zipper_res2.ply")), g_ShaderFolder),
+            CloudModel("Bunny 0.2 MB", normalizeCloud(loadModel("bunny/bun_zipper_res3.ply")), g_ShaderFolder),
+            CloudModel("Bunny 0.03 MB", normalizeCloud(loadModel("bunny/bun_zipper_res4.ply")), g_ShaderFolder),
+
+            CloudModel("Drill VRIP", normalizeCloud(loadModel("drill/drill_shaft_vrip.ply")), g_ShaderFolder),
+            CloudModel("Drill Zipper", normalizeCloud(loadModel("drill/drill_shaft_zip.ply")), g_ShaderFolder),
+
+            CloudModel("Buddha 10.9 MB", normalizeCloud(loadModel("happy_recon/happy_vrip_res2.ply")), g_ShaderFolder),
+            CloudModel("Buddha 2.4 MB", normalizeCloud(loadModel("happy_recon/happy_vrip_res3.ply")), g_ShaderFolder),
+            CloudModel("Buddha 0.5 MB", normalizeCloud(loadModel("happy_recon/happy_vrip_res4.ply")), g_ShaderFolder),
+
+            CloudModel("Dragon 7.3 MB", normalizeCloud(loadModel("dragon_recon/dragon_vrip_res2.ply")), g_ShaderFolder),
+            CloudModel("Dragon 1.7 MB", normalizeCloud(loadModel("dragon_recon/dragon_vrip_res3.ply")), g_ShaderFolder),
+            CloudModel("Dragon 0.4 MB", normalizeCloud(loadModel("dragon_recon/dragon_vrip_res4.ply")), g_ShaderFolder),
+
+            CloudModel("Armadillo", normalizeCloud(loadModel("Armadillo.ply")), g_ShaderFolder),
     };
+
+    std::array<const char *, models.size()> modelNames{};
+    for (size_t i = 0; i < models.size(); ++i) {
+        modelNames[i] = models[i].Name().data();
+    }
 
     std::array<GLuint, BUFFER_COUNT> VAOs{};
     std::array<GLuint, BUFFER_COUNT> VBOs{};
@@ -216,23 +224,14 @@ int main(int /*argc*/, char ** /*argv*/) {
         glViewport(0, 0, width, height);
     });
 
+    double reconstructionTime = 0.0f;
     int neighbourhoodSize = 3;
     int currentModel = 0;
     int gridResX = 10;
     int gridResY = 10;
     int gridResZ = 10;
-    std::array<const char *, 2> modelNames{
-            "Bunny",
-            "Sphere"
-    };
 
     int methodID = (int) ReconstructionMethod::ModifiedHoppe;
-    std::array<const char *, 4> methodLabels{
-            "Modified Hoppe",
-            "MLS",
-            "PCL: Hoppe's",
-            "PCL: Poisson"
-    };
 
     app.addDrawCallback([&]() {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -263,63 +262,60 @@ int main(int /*argc*/, char ** /*argv*/) {
             gridResZ = models[currentModel].m_Grid.GetResZ();
         }
 
-        ImGui::Combo("Method", &methodID, methodLabels.data(), methodLabels.size());
+        ImGui::Text("Point count: %lu", models[currentModel].CloudSize());
+        ImGui::Text("Triangle count: %lu", models[currentModel].TriangleCount());
+        ImGui::Text("Reconstruction time: %f", reconstructionTime);
+
+        ImGui::Combo("Method", &methodID, s_MethodLabels.data(), s_MethodLabels.size());
 
         auto method = static_cast<ReconstructionMethod>(methodID);
         if (ImGui::Button("Reconstruct"))
-            models[currentModel].Reconstruct(method);
+            reconstructionTime = models[currentModel].Reconstruct(method);
+
+        auto renderGridGUI = [&]() {
+            // Cannot merge due to short circuit || evaluation. Causes flickering
+            // when moving the slider because the render command is skipped
+            ImGui::Text("Grid resolution");
+            if (ImGui::SliderInt("X", &gridResX, 5, 100))
+                models[currentModel].m_Grid.SetResX(gridResX);
+            if (ImGui::SliderInt("Y", &gridResY, 5, 100))
+                models[currentModel].m_Grid.SetResY(gridResY);
+            if (ImGui::SliderInt("Z", &gridResZ, 5, 100))
+                models[currentModel].m_Grid.SetResZ(gridResZ);
+            if (ImGui::Button("Regenerate grid"))
+                models[currentModel].m_Grid.Regenerate();
+        };
 
         switch (method) {
-            case ReconstructionMethod::PCL_Hoppe:
-                ImGui::SliderFloat("Ignore distance", &models[currentModel].m_IgnoreDistance, -1.0f, 1.0f);
-                ImGui::SliderFloat("Iso level", &models[currentModel].m_IsoLevel, -0.1f, 0.1f);
-
             case ReconstructionMethod::ModifiedHoppe:
-                ImGui::Text("Grid resolution");
+                ImGui::Text("Neighbourhood size");
+                if (ImGui::SliderInt("", &neighbourhoodSize, 1, 10))
+                    models[currentModel].m_NeighbourhoodSize = (size_t)neighbourhoodSize;
 
-                // Cannot merge due to short circuit || evaluation. Causes flickering
-                // when moving the slider because the render command is skipped
-                if (ImGui::SliderInt("X", &gridResX, 5, 100))
-                    models[currentModel].m_Grid.SetResX(gridResX);
-                if (ImGui::SliderInt("Y", &gridResY, 5, 100))
-                    models[currentModel].m_Grid.SetResY(gridResY);
-                if (ImGui::SliderInt("Z", &gridResZ, 5, 100))
-                    models[currentModel].m_Grid.SetResZ(gridResZ);
-                if (ImGui::Button("Regenerate grid"))
-                    models[currentModel].m_Grid.Regenerate();
-
-                if (method == ReconstructionMethod::ModifiedHoppe) {
-                    ImGui::Text("Neighbourhood size");
-                    if (ImGui::SliderInt("", &neighbourhoodSize, 1, 10)) {
-                        models[currentModel].m_NeighbourhoodSize = (size_t)neighbourhoodSize;
-                    }
-                }
+                renderGridGUI();
                 break;
+
             case ReconstructionMethod::MLS:
-                ImGui::Text("Grid resolution");
+                ImGui::Text("Neighbourhood size");
+                if (ImGui::SliderInt("", &neighbourhoodSize, 1, 25))
+                    models[currentModel].m_NeighbourhoodSize = (size_t)neighbourhoodSize;
 
-                // Cannot merge due to short circuit || evaluation. Causes flickering
-                // when moving the slider because the render command is skipped
-                if (ImGui::SliderInt("X", &gridResX, 5, 100))
-                    models[currentModel].m_Grid.SetResX(gridResX);
-                if (ImGui::SliderInt("Y", &gridResY, 5, 100))
-                    models[currentModel].m_Grid.SetResY(gridResY);
-                if (ImGui::SliderInt("Z", &gridResZ, 5, 100))
-                    models[currentModel].m_Grid.SetResZ(gridResZ);
-                if (ImGui::Button("Regenerate grid"))
-                    models[currentModel].m_Grid.Regenerate();
-
-                if (method == ReconstructionMethod::ModifiedHoppe || method == ReconstructionMethod::MLS) {
-                    ImGui::Text("Neighbourhood size");
-                    if (ImGui::SliderInt("", &neighbourhoodSize, 1, 25)) {
-                        models[currentModel].m_NeighbourhoodSize = (size_t)neighbourhoodSize;
-                    }
-                }
+                renderGridGUI();
                 break;
 
+            case ReconstructionMethod::PCL_Hoppe:
+                ImGui::SliderFloat("Iso level", &models[currentModel].m_IsoLevel, 0.0f, 1.0f);
+                renderGridGUI();
+                break;
+
+            case ReconstructionMethod::PCL_MarchingCubesRBF:
+                ImGui::Text("Off surface displacement");
+                ImGui::SliderFloat("", &models[currentModel].m_OffSurfaceDisplacement, 0.0f, 1.0f);
+                ImGui::SliderFloat("Iso level", &models[currentModel].m_IsoLevel, 0.0f, 1.0f);
+                renderGridGUI();
+                break;
 
             case ReconstructionMethod::PCL_Poisson:
-                ImGui::SliderInt("Degree", &models[currentModel].m_Degree, 1, 5);
                 ImGui::SliderInt("Depth", &models[currentModel].m_Depth, 1, 10);
                 ImGui::SliderInt("Minimum depth", &models[currentModel].m_MinDepth, 1, 10);
                 ImGui::SliderInt("Iso divide", &models[currentModel].m_IsoDivide, 1, 16);
@@ -328,11 +324,34 @@ int main(int /*argc*/, char ** /*argv*/) {
                 ImGui::SliderFloat("Samples per node", &models[currentModel].m_SamplesPerNode, 1.0f, 10.0f);
                 ImGui::SliderFloat("Scale", &models[currentModel].m_Scale, 1.1f, 5.0f);
                 break;
+
+            case ReconstructionMethod::PCL_ConcaveHull:
+                ImGui::SliderFloat("Alpha", &models[currentModel].m_Alpha, 0.00001f, 0.2f);
+                break;
+
+            case ReconstructionMethod::PCL_ConvexHull:
+                break;
+
+            case ReconstructionMethod::PCL_GreedyProjectionTriangulation:
+                ImGui::SliderInt("Maximum NN", &models[currentModel].m_MaxNN, 1, 300);
+                ImGui::SliderFloat("Max surface angle", &models[currentModel].m_MaxSurfaceAngle, 1.0f, 150.0f);
+                ImGui::SliderFloat("Max triangle angle", &models[currentModel].m_MaxAngle, 1.0f, 150.0f);
+                ImGui::SliderFloat("Min triangle angle", &models[currentModel].m_MinAngle, 1.0f, 120.0f);
+                ImGui::SliderFloat("Search radius", &models[currentModel].m_SearchRadius, 0.1f, 10.0f);
+                ImGui::SliderFloat("Mu", &models[currentModel].m_Mu, 0.1f, 10.0f);
+                break;
+
+            case ReconstructionMethod::PCL_OrganizedFastMesh:
+                ImGui::SliderFloat("Angle tolerance", &models[currentModel].m_AngleTolerance, 1.0f, 90.0f);
+                ImGui::SliderFloat("Distance tolerance", &models[currentModel].m_DistTolerance, 0.0f, 10.0f);
+                ImGui::SliderFloat("Max edge length", &models[currentModel].m_A, 0.001f, 1.0f);
+                break;
         }
 
         ImGui::Text("Debug Options");
         ImGui::Checkbox("Show mesh", &models[currentModel].m_ShowMesh);
         ImGui::Checkbox("Show grid", &models[currentModel].m_ShowGrid);
+        ImGui::Checkbox("Show BB", &models[currentModel].m_ShowBB);
         ImGui::Checkbox("Show input PC", &models[currentModel].m_ShowInputPC);
         if (models[currentModel].m_ShowInputPC) {
             ImGui::Checkbox("Show normals", &models[currentModel].m_ShowNormals);

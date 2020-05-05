@@ -25,6 +25,28 @@ int omp_get_num_procs();
 #include <Loader.h>
 #include <Gui.h>
 
+
+struct Cube {
+    // Indices of MC edge vertices in order
+    // compatible with the edge and triangle table.
+    // Used when computing positions of edge intersections
+    static constexpr std::array<GLuint, 24> s_CornerIndices{
+            0, 1,
+            1, 2,
+            2, 3,
+            3, 0,
+            4, 5,
+            5, 6,
+            6, 7,
+            7, 4,
+            0, 4,
+            1, 5,
+            2, 6,
+            3, 7
+    };
+};
+
+
 struct VertexRGB {
     glm::vec3 pos = glm::vec3(0.0f);
     glm::vec3 color = glm::vec3(0.0f);
@@ -56,22 +78,57 @@ struct VertexRGBNormal {
 
 
 struct BoundingBox {
-    Eigen::Vector4f min;
-    Eigen::Vector4f max;
-    Eigen::Vector4f size;
+    std::array<glm::vec3, 8> m_Corners;
+
+    glm::vec3 min;
+    glm::vec3 max;
+    glm::vec3 size;
+
+    GLuint m_VAO = 0;
+    GLuint m_VBO = 0;
+    GLuint m_EBO = 0;
 
     BoundingBox(pcl::PointCloud<pcl::PointNormal>::Ptr &cloud, float increase) {
-        pcl::getMinMax3D(*cloud, min, max);
+        Eigen::Vector4f minTmp, maxTmp;
+        pcl::getMinMax3D(*cloud, minTmp, maxTmp);
+        min = glm::vec3(minTmp.x(), minTmp.y(), minTmp.z());
+        max = glm::vec3(maxTmp.x(), maxTmp.y(), maxTmp.z());
         size = max - min;
         min -= (size * (increase / 2.0f));
         max += (size * (increase / 2.0f));
         size *= (1.0f + increase);
+
+        m_Corners = {
+            min,
+            min + glm::vec3(size.x, 0.0f, 0.0f),
+            min + glm::vec3(size.x, size.y, 0.0f),
+            min + glm::vec3(0.0f, size.y, 0.0f),
+
+            min + glm::vec3(0.0f, 0.0f, size.z),
+            min + glm::vec3(size.x, 0.0f, size.z),
+            max,
+            min + glm::vec3(0.0f, size.y, size.z),
+        };
+
+
+        glCreateVertexArrays(1, &m_VAO);
+        glCreateBuffers(1, &m_VBO);
+        glCreateBuffers(1, &m_EBO);
+
+        glVertexArrayElementBuffer(m_VAO, m_EBO);
+        glEnableVertexArrayAttrib(m_VAO, 0);
+        glVertexArrayAttribFormat(m_VAO, 0, 3, GL_FLOAT, GL_FALSE, 0);
+        glVertexArrayVertexBuffer(m_VAO, 0, m_VBO, 0, sizeof(glm::vec3));
+        glNamedBufferData(m_VBO, sizeof(glm::vec3) * m_Corners.size(), m_Corners.data(), GL_STATIC_DRAW);
+        glNamedBufferData(m_EBO, sizeof(GLuint) * Cube::s_CornerIndices.size(), Cube::s_CornerIndices.data(), GL_STATIC_DRAW);
     }
 
+    void Draw(ProgramObject &shader, glm::mat4 pvm) const;
+
     void Print() {
-        printf("[BB] Size: [%f, %f, %f]\n", size.x(), size.y(), size.z());
-        printf("[BB] Min: [%f, %f, %f]\n", min.x(), min.y(), min.z());
-        printf("[BB] Max: [%f, %f, %f]\n", max.x(), max.y(), max.z());
+        printf("[BB] Size: [%f, %f, %f]\n", size.x, size.y, size.z);
+        printf("[BB] Min: [%f, %f, %f]\n", min.x, min.y, min.z);
+        printf("[BB] Max: [%f, %f, %f]\n", max.x, max.y, max.z);
     }
 };
 
@@ -136,26 +193,6 @@ public:
     }
 };
 
-struct MarchingCube {
-    // Indices of MC edge vertices in order
-    // compatible with the edge and triangle table.
-    // Used when computing positions of edge intersections
-    static constexpr std::array<size_t, 24> s_CornerIndices{
-            0, 1,
-            1, 2,
-            2, 3,
-            3, 0,
-            4, 5,
-            5, 6,
-            6, 7,
-            7, 4,
-            0, 4,
-            1, 5,
-            2, 6,
-            3, 7
-    };
-};
-
 
 struct HoppeParameters {
 };
@@ -174,12 +211,39 @@ enum class ReconstructionMethod {
     ModifiedHoppe,
     MLS,
     PCL_Hoppe,
-    PCL_Poisson
+    PCL_MarchingCubesRBF,
+    PCL_Poisson,
+    PCL_ConcaveHull,
+    PCL_ConvexHull,
+    PCL_GreedyProjectionTriangulation,
+    PCL_OrganizedFastMesh
+};
+
+static std::array<const char *, 9> s_MethodLabels{
+        "Modified Hoppe's",
+        "MLS",
+        "PCL: Hoppe's",
+        "PCL: Marching Cubes RBF",
+        "PCL: Poisson",
+        "PCL: ConcaveHull (alpha shapes)",
+        "PCL: ConvexHull",
+        "PCL: Greedy Projection Triangulation",
+        "PCL: Organized Fast Mesh"
 };
 
 
 class CloudModel {
     friend class Grid;
+
+    enum Buffers {
+        Mesh,
+        Cloud,
+        CloudNormals,
+        BUFFER_COUNT
+    };
+
+    std::string m_Name;
+
 
     pcl::PointCloud<pcl::PointNormal>::Ptr m_Cloud;
     pcl::search::KdTree<pcl::PointNormal>::Ptr m_Tree;
@@ -191,18 +255,11 @@ class CloudModel {
     /* Maps indices of two vertices forming an MC edge to an index of an interpolated edge vertex */
     std::unordered_map<std::pair<size_t, size_t>, size_t, PairHash> m_VertexIndices;
 
-    enum Buffers {
-        Mesh,
-        Cloud,
-        CloudNormals,
-        BUFFER_COUNT
-    };
-
     std::array<GLuint, BUFFER_COUNT> m_VAOs = {};
     std::array<GLuint, BUFFER_COUNT> m_VBOs = {};
     std::array<GLuint, BUFFER_COUNT> m_EBOs = {};
 
-    static ProgramObject s_MeshProgram;
+    static ProgramObject s_MeshShader;
     static ProgramObject s_ShaderProgram;
     static ProgramObject s_GeometryProgram;
     static ProgramObject s_ColorProgram;
@@ -212,22 +269,30 @@ class CloudModel {
     void ExtractPclReconstructionData(const std::vector<pcl::Vertices> &outputIndices,
                                       const pcl::PointCloud<pcl::PointNormal>::Ptr &surfacePoints);
 
-    void HoppeReconstruction();
+    double HoppeReconstruction();
 
-    void PCL_HoppeReconstruction();
+    double MLSReconstruction();
 
-    void MLSReconstruction();
+    double PCL_HoppeReconstruction();
 
-    void PCL_PoissonReconstruction();
+    double PCL_MC_RBF_Reconstruction();
+
+    double PCL_PoissonReconstruction();
+
+    double PCL_ConcaveHullReconstruction();
+
+    double PCL_ConvexHullReconstruction();
+
+    double PCL_GP3();
+
+    double PCL_OrganizedFastMeshReconstruction();
 
 public:
     BoundingBox m_BB;
     Grid m_Grid;
     float m_IsoLevel = 0.0f;
-    float m_IgnoreDistance = -1.0f;
     size_t m_NeighbourhoodSize = 1;
 
-    int m_Degree = 2;
     int m_Depth = 8;
     int m_MinDepth = 5;
     int m_IsoDivide = 8;
@@ -235,17 +300,42 @@ public:
     float m_PointWeight = 4.0f;
     float m_SamplesPerNode = 1.0f;
     float m_Scale = 1.1f;
+    float m_OffSurfaceDisplacement = 0.0f;
 
-    bool m_ShowGrid = true;
+    float m_Alpha = 1.0f;
+
+    // GP3
+    float m_SearchRadius = 0.1f;
+    float m_Mu = 0.1f;
+    float m_MaxAngle = 120.0f;
+    float m_MinAngle = 10.0f;
+    float m_MaxSurfaceAngle = 45.0f;
+    int m_MaxNN = 100;
+
+    // FastMesh
+    float m_AngleTolerance = 12.5f;
+    float m_DistTolerance = 0;
+    float m_A = 0.15f;
+    float m_B = 0.0f;
+    float m_C = 0.0f;
+
+    bool m_ShowBB = true;
+    bool m_ShowGrid = false;
     bool m_ShowMesh = true;
-    bool m_ShowInputPC = false;
+    bool m_ShowInputPC = true;
     bool m_ShowNormals = false;
 
-    CloudModel(pcl::PointCloud<pcl::PointNormal>::Ptr cloud, const std::string &shaderDir);
+    CloudModel(const std::string& name, pcl::PointCloud<pcl::PointNormal>::Ptr cloud, const std::string &shaderDir);
 
-    void Draw(glm::mat4 pv, glm::vec3 color);
+    const std::string& Name() const { return m_Name; }
 
-    void Reconstruct(ReconstructionMethod method);
+    void Draw(glm::mat4 pv, glm::vec3 color) const;
+
+    double Reconstruct(ReconstructionMethod method);
+
+    size_t CloudSize() const { return m_Cloud->points.size(); }
+
+    size_t TriangleCount() const { return m_MeshIndices.size() / 3; }
 };
 
 
