@@ -123,12 +123,11 @@ void Grid::CalculateIsoValues(size_t neighbourhoodSize) {
             VertexRGB &gridVertex(m_Points[i]);
             pcl::PointNormal gridPoint;
             std::memcpy(gridPoint.data, glm::value_ptr(gridVertex.pos), sizeof(float) * 3);
-
             int found = m_ParentModel.m_Tree->nearestKSearch(gridPoint, neighbourhoodSize, *indices, distances);
             assert((size_t) found == neighbourhoodSize);
 
             float distance = 0.0f;
-            if (neighbourhoodSize > 1) {
+            if (neighbourhoodSize > 2) {
                 pcl::PCA<pcl::PointNormal> pca;
                 pca.setInputCloud(m_ParentModel.m_Cloud);
                 pca.setIndices(indices);
@@ -136,6 +135,11 @@ void Grid::CalculateIsoValues(size_t neighbourhoodSize) {
                 auto eigenVectors = pca.getEigenVectors();
                 glm::vec3 centroidVertex(centroid.x(), centroid.y(), centroid.z());
                 pcl::PointNormal nearestPoint = m_ParentModel.m_Cloud->points[indices->front()];
+                Eigen::Vector3f averageNormal = nearestPoint.getNormalVector3fMap();
+                for (size_t neighbourIdx = 1; i < neighbourhoodSize; i++) {
+                    averageNormal += m_ParentModel.m_Cloud->points[indices->at(neighbourIdx)].getNormalVector3fMap();
+                }
+                averageNormal /= neighbourhoodSize;
 
                 // Find eigen vector with lowest angle
                 float max = 0;
@@ -144,7 +148,8 @@ void Grid::CalculateIsoValues(size_t neighbourhoodSize) {
                     auto eigenVector(eigenVectors.col(vectorIdx));
                     eigenVector.normalize();
 
-                    float dotProduct = nearestPoint.getNormalVector3fMap().dot(eigenVector);
+//                    float dotProduct = nearestPoint.getNormalVector3fMap().dot(eigenVector);
+                    float dotProduct = averageNormal.dot(eigenVector);
                     if (std::abs(dotProduct) >= max) {
                         max = dotProduct;
 

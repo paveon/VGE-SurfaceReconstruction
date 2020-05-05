@@ -2,16 +2,12 @@
 
 #include <iostream>
 #include <tuple>
+#include <unordered_set>
+#include <queue>
 
-// #include <pcl/common/vector_average.h>
-// #include <pcl/Vertices.h>
-// #include <pcl/common/common_headers.h>
+
 #include <pcl/features/normal_3d.h>
 #include <pcl/conversions.h>
-
-// #include <pcl/visualization/pcl_visualizer.h>
-// #include <pcl/features/normal_3d.h>
-// #include <pcl/search/impl/search.hpp>
 
 #include <pcl/common/common.h>
 #include <pcl/common/transforms.h>
@@ -22,7 +18,6 @@
 #include <BaseApp.h>
 #include <Loader.h>
 #include <Gui.h>
-//#include <glm/gtx/string_cast.hpp>
 
 #include "CloudModel.h"
 #include "ExampleClouds.h"
@@ -97,26 +92,104 @@ pcl::PointCloud<pcl::PointNormal>::Ptr normalizeCloud(pcl::PointCloud<pcl::Point
 
 
 pcl::PointCloud<pcl::PointNormal>::Ptr loadModel(std::string modelPath) {
-    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>());
+    pcl::PointCloud<pcl::PointNormal>::Ptr cloud(new pcl::PointCloud<pcl::PointNormal>());
     pcl::PLYReader reader;
     std::string filepath(g_ModelFolder + modelPath);
 
     std::cout << "Loading ply file: " << filepath << std::endl;
     if (pcl::io::loadPLYFile(filepath, *cloud) != -1) {
-        pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> normalEstimation;
-        pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>());
-        pcl::PointCloud<pcl::Normal>::Ptr cloudNormals(new pcl::PointCloud<pcl::Normal>());
+//        pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> normalEstimation;
+//        pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>());
+//        pcl::PointCloud<pcl::Normal>::Ptr cloudNormals(new pcl::PointCloud<pcl::Normal>());
+//
+//        normalEstimation.setInputCloud(cloud);
+//        normalEstimation.setSearchMethod(tree);
+//        normalEstimation.setKSearch(5);
+//        // normalEstimation.setRadiusSearch(0.03); // Use all neighbors in a sphere of radius 3cm
+//        normalEstimation.compute(*cloudNormals); // Compute the features
+//
+//        pcl::PointCloud<pcl::PointNormal>::Ptr result(new pcl::PointCloud<pcl::PointNormal>());
+//        pcl::concatenateFields(*cloud, *cloudNormals, *result);
 
-        normalEstimation.setInputCloud(cloud);
-        normalEstimation.setSearchMethod(tree);
-        normalEstimation.setKSearch(5);
-        // normalEstimation.setRadiusSearch(0.03); // Use all neighbors in a sphere of radius 3cm
-        normalEstimation.compute(*cloudNormals); // Compute the features
+        pcl::search::KdTree<pcl::PointNormal>::Ptr tree(new pcl::search::KdTree<pcl::PointNormal>());
+        pcl::NormalEstimation<pcl::PointNormal, pcl::Normal> normalEstimation;
+        tree->setInputCloud(cloud);
 
-        pcl::PointCloud<pcl::PointNormal>::Ptr result(new pcl::PointCloud<pcl::PointNormal>());
-        pcl::concatenateFields(*cloud, *cloudNormals, *result);
+        pcl::IndicesPtr kIndices(pcl::make_shared<std::vector<int>>());
+        kIndices->resize(5);
+        std::vector<float> kDistances(5);
 
-        return result;
+        float maxZ = cloud->points[0].z;
+        float maxIdx = 0;
+        for (size_t i = 1; i < cloud->points.size(); ++i) {
+            if (cloud->points[i].z > maxZ) {
+                maxIdx = i;
+                maxZ = cloud->points[i].z;
+            }
+        }
+
+        // Find KNN
+        pcl::PointNormal& maxPoint = cloud->points[maxIdx];
+        int found = tree->nearestKSearch(maxPoint, 5, *kIndices, kDistances);
+        assert((size_t) found == 5);
+
+        // Compute normal from KNN
+        normalEstimation.computePointNormal(*cloud, *kIndices, maxPoint.normal_x, maxPoint.normal_y, maxPoint.normal_z, maxPoint.curvature);
+
+        Eigen::Vector3f upVector(0.0f, 0.0f, 1.0f);
+        if (maxPoint.getNormalVector3fMap().dot(upVector) < 0) {
+            // Normal of point with maximum z-coord should point upwards, invert normal
+            maxPoint.normal_x *= -1;
+            maxPoint.normal_y *= -1;
+            maxPoint.normal_z *= -1;
+        }
+
+        std::unordered_set<size_t> visitedPoints;
+        std::queue<size_t> toVisit;
+        toVisit.push(maxIdx);
+        while (!toVisit.empty()) {
+            size_t idx = toVisit.front();
+            toVisit.pop();
+            if (visitedPoints.find(idx) != visitedPoints.end())
+                continue;
+
+            visitedPoints.insert(idx);
+
+            pcl::PointNormal& point = cloud->points[idx];
+
+            int found = tree->nearestKSearch(point, 5, *kIndices, kDistances);
+            assert((size_t) found == 5);
+
+            for (size_t neighbourIdx : *kIndices) {
+                if (visitedPoints.find(neighbourIdx) != visitedPoints.end())
+                    continue;
+
+                toVisit.push(neighbourIdx);
+                pcl::PointNormal& neighbourPoint = cloud->points[neighbourIdx];
+
+                std::vector<int> indices(5);
+                std::vector<float> distances(5);
+                int found = tree->nearestKSearch(neighbourPoint, 5, indices, distances);
+                assert((size_t) found == 5);
+
+                // Compute normal from KNN
+                normalEstimation.computePointNormal(*cloud, indices, neighbourPoint.normal_x, 
+                    neighbourPoint.normal_y, neighbourPoint.normal_z, neighbourPoint.curvature);
+
+                // Flip if necessary
+                if (neighbourPoint.getNormalVector3fMap().dot(point.getNormalVector3fMap()) < 0) {
+                    // Normal of point with maximum z-coord should point upwards, invert normal
+                    neighbourPoint.normal_x *= -1;
+                    neighbourPoint.normal_y *= -1;
+                    neighbourPoint.normal_z *= -1;
+                }
+            }
+        }
+
+        // TOO complicated...
+        // Find NN with most minimal normal angle difference
+        // auto vec = maxPoint.getNormalVector3fMap();
+        return cloud;
     }
     throw std::runtime_error("Model could not be loaded");
 }
