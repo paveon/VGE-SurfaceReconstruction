@@ -108,7 +108,7 @@ void Grid::CalculateIsoValues(size_t neighbourhoodSize) {
 
 #pragma omp parallel
     {
-        pcl::IndicesPtr indices(pcl::make_shared<std::vector<int>>());
+        pcl::IndicesPtr indices(new std::vector<int>);
         indices->resize(neighbourhoodSize);
         std::vector<float> distances(neighbourhoodSize);
 
@@ -199,7 +199,7 @@ void Grid::Draw(ProgramObject &shader, glm::mat4 pvm) const {
 CloudModel::CloudModel(const std::string& name, pcl::PointCloud<pcl::PointNormal>::Ptr cloud, const std::string &shaderDir) :
         m_Name(name),
         m_Cloud(std::move(cloud)),
-        m_Tree(pcl::make_shared<pcl::search::KdTree<pcl::PointNormal>>()),
+        m_Tree(new pcl::search::KdTree<pcl::PointNormal>()),
         m_BB(m_Cloud, 0.1f),
         m_Grid(*this) {
 
@@ -595,7 +595,7 @@ void Grid::CalculateIsoValuesMLS(size_t neighbourhoodSize) {
 
     std::vector<float> k_sqr_distances;
     std::vector<float> _closest_k_sqr_distances;
-    unsigned degree = neighbourhoodSize > 9 ? 3 : neighbourhoodSize > 5 ? 2 : 1;
+    unsigned degree = neighbourhoodSize > 10 ? 3 : neighbourhoodSize > 5 ? 2 : 1;
     size_t mat_size = (degree == 3) ? 9 : ((degree == 2) ? 6 : 3);
     ClockGuard timer(__func__);
 
@@ -615,21 +615,27 @@ void Grid::CalculateIsoValuesMLS(size_t neighbourhoodSize) {
         Eigen::VectorXd x_s(found);
         Eigen::VectorXd y_s(found);
         Eigen::VectorXd z_s(found);
+        Eigen::VectorXd x_m(found);
+        Eigen::VectorXd y_m(found);
+        Eigen::VectorXd z_m(found);
         float sums2[3] = {0,0,0};
         float sums[3] = {0,0,0};
         for (size_t _i = 0; _i < indices->size(); _i++) {
             float _x = m_ParentModel.m_Cloud->at(indices->at(_i)).x;
             x_s[_i] = _x;
+            x_m[_i] = m_ParentModel.m_Cloud->at(indices->at(_i)).normal_x;
             sums2[0] += pow(_x,2);
             sums[0] += _x;
 
             float _y = m_ParentModel.m_Cloud->at(indices->at(_i)).y;
             y_s[_i] = _y;
+            y_m[_i] = m_ParentModel.m_Cloud->at(indices->at(_i)).normal_y;
             sums2[1] += pow(_y,2);
             sums[1] += _y;
 
             float _z = m_ParentModel.m_Cloud->at(indices->at(_i)).z;
             z_s[_i] = _z;
+            z_m[_i] = m_ParentModel.m_Cloud->at(indices->at(_i)).normal_z;
             sums2[2] += pow(_z,2);
             sums[2] += _z;
         }
@@ -663,7 +669,7 @@ void Grid::CalculateIsoValuesMLS(size_t neighbourhoodSize) {
             /* fit data */
             Eigen::MatrixXd coeffs_yz = pseudoinverse(mat_yz) * x_s;
             /* compute distance */
-            distance = (dist2d(closest_point.x - closest_point.normal_x, _f_2d(coeffs_yz, closest_point.y, closest_point.z), 1) < 0 ? 1 : -1 ) *
+            distance = (dist2d(gridPoint.x - x_m.mean(), _f_2d(coeffs_yz, closest_point.y, closest_point.z), 1) < dist2d(gridPoint.x, _f_2d(coeffs_yz, closest_point.y, closest_point.z), 1) ? 1 : -1 ) *
                            dist2d(gridPoint.x, _f_2d(coeffs_yz, gridPoint.y, gridPoint.z), _closest_k_sqr_distances.at(0));
 
         } else if (vars[1] < vars[0] && vars[1] < vars[2]) {
@@ -674,7 +680,7 @@ void Grid::CalculateIsoValuesMLS(size_t neighbourhoodSize) {
                 mat2d(mat_xz, _i, x_s, z_s);
             }
             Eigen::MatrixXd coeffs_xz = pseudoinverse(mat_xz) * y_s;
-            distance = (dist2d(closest_point.y - closest_point.normal_y, _f_2d(coeffs_xz, closest_point.x, closest_point.z), 1) < 0 ? 1 : -1 ) *
+            distance = (dist2d(gridPoint.y - y_m.mean(), _f_2d(coeffs_xz, closest_point.x, closest_point.z), 1) < dist2d(gridPoint.y, _f_2d(coeffs_xz, closest_point.x, closest_point.z), 1) ? 1 : -1 ) *
                         dist2d(gridPoint.y, _f_2d(coeffs_xz, gridPoint.x, gridPoint.z), _closest_k_sqr_distances.at(0));
         } else {
             /* z is y */
@@ -684,46 +690,10 @@ void Grid::CalculateIsoValuesMLS(size_t neighbourhoodSize) {
                 mat2d(mat_xy, _i, x_s, y_s);
             }
             Eigen::MatrixXd coeffs_xy = pseudoinverse(mat_xy) * z_s;
-            distance = (dist2d(closest_point.z - closest_point.normal_z, _f_2d(coeffs_xy, closest_point.x, closest_point.y), 1) < 0 ? 1 : -1 ) *
+            distance = (dist2d(gridPoint.z - z_m.mean(), _f_2d(coeffs_xy, closest_point.x, closest_point.y), 1) < dist2d(gridPoint.z, _f_2d(coeffs_xy, closest_point.x, closest_point.y), 1) ? 1 : -1 ) *
                         dist2d(gridPoint.z, _f_2d(coeffs_xy, gridPoint.x, gridPoint.y), _closest_k_sqr_distances.at(0));
         }
         // smallest variance is variable
-
-
-
-        if (neighbourhoodSize > 1) {/*
-            for (size_t vectorIdx = 0; vectorIdx < 3; vectorIdx++) {
-                auto eigenVector(eigenVectors.col(vectorIdx));
-                eigenVector.normalize();
-
-                float dotProduct = nearestPoint.getNormalVector3fMap().dot(eigenVector);
-                if (std::abs(dotProduct) >= max) {
-                    max = dotProduct;
-
-                    // Resulting normal (eigen vector) might be incorrectly oriented. Original
-                    // paper deals with this by using complex algorithm which traverses Riemannian
-                    // graph and consistently orients normals of connected tangent planes.
-                    // We'll use a hack and orient the normal based on the orientation of the closest point
-                    normal = glm::vec3(eigenVector.x(), eigenVector.y(), eigenVector.z());
-                    if (max < 0) {
-                        max = -max;
-                        normal = -normal;
-                    }
-                }
-            }
-
-            glm::vec3 direction(gridVertex.pos - centroidVertex);
-            distance = glm::dot(direction, glm::normalize(normal));*/
-        } else {
-            pcl::PointNormal nearestPoint = m_ParentModel.m_Cloud->points[indices->front()];
-
-            // Calculate the distance between the MC corner point and the tangent
-            // plane of the closest surface point. Dot projection of the point2point
-            // vector and the unit-length surface normal gives us the distance.
-            auto direction = gridPoint.getVector3fMap() - nearestPoint.getVector3fMap();
-            distance = nearestPoint.getNormalVector3fMap().dot(direction);
-        }
-
         m_IsoValues[i] = distance;
 
         // Red color for corner points outside the geometry and green for points that are inside
@@ -784,7 +754,7 @@ double CloudModel::PCL_HoppeReconstruction() {
     hoppe.setIsoLevel(m_IsoLevel);
 
     std::vector<pcl::Vertices> outputIndices;
-    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(pcl::make_shared<pcl::PointCloud<pcl::PointNormal>>());
+    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(new pcl::PointCloud<pcl::PointNormal>());
     hoppe.reconstruct(*surfaceCloud, outputIndices);
 
     ExtractPclReconstructionData(outputIndices, surfaceCloud);
@@ -808,7 +778,7 @@ double CloudModel::PCL_MC_RBF_Reconstruction() {
     rbf.setOffSurfaceDisplacement(m_OffSurfaceDisplacement);
 
     std::vector<pcl::Vertices> outputIndices;
-    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(pcl::make_shared<pcl::PointCloud<pcl::PointNormal>>());
+    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(new pcl::PointCloud<pcl::PointNormal>());
     rbf.reconstruct(*surfaceCloud, outputIndices);
 
     ExtractPclReconstructionData(outputIndices, surfaceCloud);
@@ -833,7 +803,7 @@ double CloudModel::PCL_PoissonReconstruction() {
     poisson.setScale(m_Scale);
 
     std::vector<pcl::Vertices> outputIndices;
-    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(pcl::make_shared<pcl::PointCloud<pcl::PointNormal>>());
+    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(new pcl::PointCloud<pcl::PointNormal>());
     poisson.reconstruct(*surfaceCloud, outputIndices);
 
     ExtractPclReconstructionData(outputIndices, surfaceCloud);
@@ -852,7 +822,7 @@ double CloudModel::PCL_ConcaveHullReconstruction() {
     hull.setAlpha(m_Alpha);
 
     std::vector<pcl::Vertices> outputIndices;
-    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(pcl::make_shared<pcl::PointCloud<pcl::PointNormal>>());
+    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(new pcl::PointCloud<pcl::PointNormal>());
     hull.reconstruct(*surfaceCloud, outputIndices);
 
     ExtractPclReconstructionData(outputIndices, surfaceCloud);
@@ -869,7 +839,7 @@ double CloudModel::PCL_ConvexHullReconstruction() {
     hull.setSearchMethod(m_Tree);
 
     std::vector<pcl::Vertices> outputIndices;
-    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(pcl::make_shared<pcl::PointCloud<pcl::PointNormal>>());
+    pcl::PointCloud<pcl::PointNormal>::Ptr surfaceCloud(new pcl::PointCloud<pcl::PointNormal>());
     hull.reconstruct(*surfaceCloud, outputIndices);
 
     ExtractPclReconstructionData(outputIndices, surfaceCloud);
