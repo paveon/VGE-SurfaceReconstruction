@@ -17,7 +17,7 @@ void main() {
     gl_Position = gl_in[0].gl_Position; 
     EmitVertex();
 
-    gl_Position = gl_in[0].gl_Position + (pvm * vec4(normalV[0] * 0.2, 0.0));
+    gl_Position = gl_in[0].gl_Position + (pvm * vec4(normalV[0] * 0.05, 0.0));
     EmitVertex();
 
     EndPrimitive();
