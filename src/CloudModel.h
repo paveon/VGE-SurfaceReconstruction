@@ -302,6 +302,10 @@ public:
     float m_Scale = 1.1f;
     float m_OffSurfaceDisplacement = 0.0f;
 
+    // MLS
+    int m_MLS_degree = 2;
+    bool m_MLS_use_median = false;
+
     float m_Alpha = 1.0f;
 
     // GP3

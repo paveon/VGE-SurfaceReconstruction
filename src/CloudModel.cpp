@@ -478,7 +478,16 @@ double CloudModel::MLSReconstruction() {
 
 
     m_Grid.CalculateIsoValuesMLS(m_NeighbourhoodSize);
-
+    if(m_MLS_use_median) {
+        float kernel[3];
+        for (unsigned i = 1; i < m_Grid.m_IsoValues.size() - 1; i++) {
+            kernel[0] = m_Grid.m_IsoValues[i - 1];
+            kernel[1] = m_Grid.m_IsoValues[i];
+            kernel[2] = m_Grid.m_IsoValues[i + 1];
+            std::sort(kernel, kernel + 3, std::greater<float>());
+            m_Grid.m_IsoValues[i] = kernel[1];
+        }
+    }
     m_VertexIndices.clear();
     m_VertexIndices.rehash(m_Grid.m_Points.size() * 1.25f);
     m_MeshVertices.clear();
@@ -600,7 +609,12 @@ void Grid::CalculateIsoValuesMLS(size_t neighbourhoodSize) {
 
     std::vector<float> k_sqr_distances;
     std::vector<float> _closest_k_sqr_distances;
-    unsigned degree = neighbourhoodSize > 10 ? 3 : neighbourhoodSize > 5 ? 2 : 1;
+    unsigned degree;
+    if(m_ParentModel.m_MLS_degree == 0){
+        degree = neighbourhoodSize > 11 ? 3 : neighbourhoodSize > 5 ? 2 : 1;
+    } else {
+        degree = m_ParentModel.m_MLS_degree;
+    }
     size_t mat_size = (degree == 3) ? 9 : ((degree == 2) ? 6 : 3);
     ClockGuard timer(__func__);
 
@@ -620,27 +634,27 @@ void Grid::CalculateIsoValuesMLS(size_t neighbourhoodSize) {
         Eigen::VectorXd x_s(found);
         Eigen::VectorXd y_s(found);
         Eigen::VectorXd z_s(found);
-        Eigen::VectorXd x_m(found);
-        Eigen::VectorXd y_m(found);
-        Eigen::VectorXd z_m(found);
+        Eigen::VectorXd x_n(found);
+        Eigen::VectorXd y_n(found);
+        Eigen::VectorXd z_n(found);
         float sums2[3] = {0,0,0};
         float sums[3] = {0,0,0};
         for (size_t _i = 0; _i < indices->size(); _i++) {
             float _x = m_ParentModel.m_Cloud->at(indices->at(_i)).x;
             x_s[_i] = _x;
-            x_m[_i] = m_ParentModel.m_Cloud->at(indices->at(_i)).normal_x;
+            x_n[_i] = m_ParentModel.m_Cloud->at(indices->at(_i)).normal_x;
             sums2[0] += pow(_x,2);
             sums[0] += _x;
 
             float _y = m_ParentModel.m_Cloud->at(indices->at(_i)).y;
             y_s[_i] = _y;
-            y_m[_i] = m_ParentModel.m_Cloud->at(indices->at(_i)).normal_y;
+            y_n[_i] = m_ParentModel.m_Cloud->at(indices->at(_i)).normal_y;
             sums2[1] += pow(_y,2);
             sums[1] += _y;
 
             float _z = m_ParentModel.m_Cloud->at(indices->at(_i)).z;
             z_s[_i] = _z;
-            z_m[_i] = m_ParentModel.m_Cloud->at(indices->at(_i)).normal_z;
+            z_n[_i] = m_ParentModel.m_Cloud->at(indices->at(_i)).normal_z;
             sums2[2] += pow(_z,2);
             sums[2] += _z;
         }
@@ -674,7 +688,7 @@ void Grid::CalculateIsoValuesMLS(size_t neighbourhoodSize) {
             /* fit data */
             Eigen::MatrixXd coeffs_yz = pseudoinverse(mat_yz) * x_s;
             /* compute distance */
-            distance = (dist2d(gridPoint.x - x_m.mean(), _f_2d(coeffs_yz, closest_point.y, closest_point.z), 1) < dist2d(gridPoint.x, _f_2d(coeffs_yz, closest_point.y, closest_point.z), 1) ? 1 : -1 ) *
+            distance = (dist2d(gridPoint.x - x_n.mean()/10, _f_2d(coeffs_yz, closest_point.y, closest_point.z), 1) < dist2d(gridPoint.x, _f_2d(coeffs_yz, closest_point.y, closest_point.z), 1) ? 1 : -1 ) *
                            dist2d(gridPoint.x, _f_2d(coeffs_yz, gridPoint.y, gridPoint.z), _closest_k_sqr_distances.at(0));
 
         } else if (vars[1] < vars[0] && vars[1] < vars[2]) {
@@ -685,7 +699,7 @@ void Grid::CalculateIsoValuesMLS(size_t neighbourhoodSize) {
                 mat2d(mat_xz, _i, x_s, z_s);
             }
             Eigen::MatrixXd coeffs_xz = pseudoinverse(mat_xz) * y_s;
-            distance = (dist2d(gridPoint.y - y_m.mean(), _f_2d(coeffs_xz, closest_point.x, closest_point.z), 1) < dist2d(gridPoint.y, _f_2d(coeffs_xz, closest_point.x, closest_point.z), 1) ? 1 : -1 ) *
+            distance = (dist2d(gridPoint.y - y_n.mean()/10, _f_2d(coeffs_xz, closest_point.x, closest_point.z), 1) < dist2d(gridPoint.y, _f_2d(coeffs_xz, closest_point.x, closest_point.z), 1) ? 1 : -1 ) *
                         dist2d(gridPoint.y, _f_2d(coeffs_xz, gridPoint.x, gridPoint.z), _closest_k_sqr_distances.at(0));
         } else {
             /* z is y */
@@ -695,7 +709,7 @@ void Grid::CalculateIsoValuesMLS(size_t neighbourhoodSize) {
                 mat2d(mat_xy, _i, x_s, y_s);
             }
             Eigen::MatrixXd coeffs_xy = pseudoinverse(mat_xy) * z_s;
-            distance = (dist2d(gridPoint.z - z_m.mean(), _f_2d(coeffs_xy, closest_point.x, closest_point.y), 1) < dist2d(gridPoint.z, _f_2d(coeffs_xy, closest_point.x, closest_point.y), 1) ? 1 : -1 ) *
+            distance = (dist2d(gridPoint.z - z_n.mean()/10, _f_2d(coeffs_xy, closest_point.x, closest_point.y), 1) < dist2d(gridPoint.z, _f_2d(coeffs_xy, closest_point.x, closest_point.y), 1) ? 1 : -1 ) *
                         dist2d(gridPoint.z, _f_2d(coeffs_xy, gridPoint.x, gridPoint.y), _closest_k_sqr_distances.at(0));
         }
         // smallest variance is variable
