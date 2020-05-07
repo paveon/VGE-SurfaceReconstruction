@@ -282,6 +282,8 @@ int main(int /*argc*/, char ** /*argv*/) {
                 if (ImGui::SliderInt("", &neighbourhoodSize, 1, 25))
                     currentModel->m_NeighbourhoodSize = (size_t)neighbourhoodSize;
 
+                ImGui::Checkbox("Use median filter", &currentModel->m_MLS_use_median);
+                ImGui::SliderInt("Polynom degree", &currentModel->m_MLS_degree, 0, 3);
                 renderGridGUI();
                 break;
 
