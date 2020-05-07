@@ -2,17 +2,12 @@
 
 #include <iostream>
 #include <tuple>
-#include <unordered_set>
-#include <queue>
-
 
 #include <pcl/features/normal_3d.h>
-#include <pcl/conversions.h>
 
 #include <pcl/common/common.h>
 #include <pcl/common/transforms.h>
 #include <pcl/point_types.h>
-#include <pcl/io/pcd_io.h>
 #include <pcl/io/ply_io.h>
 
 #include <BaseApp.h>
@@ -98,98 +93,7 @@ pcl::PointCloud<pcl::PointNormal>::Ptr loadModel(std::string modelPath) {
 
     std::cout << "Loading ply file: " << filepath << std::endl;
     if (pcl::io::loadPLYFile(filepath, *cloud) != -1) {
-//        pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> normalEstimation;
-//        pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>());
-//        pcl::PointCloud<pcl::Normal>::Ptr cloudNormals(new pcl::PointCloud<pcl::Normal>());
-//
-//        normalEstimation.setInputCloud(cloud);
-//        normalEstimation.setSearchMethod(tree);
-//        normalEstimation.setKSearch(5);
-//        // normalEstimation.setRadiusSearch(0.03); // Use all neighbors in a sphere of radius 3cm
-//        normalEstimation.compute(*cloudNormals); // Compute the features
-//
-//        pcl::PointCloud<pcl::PointNormal>::Ptr result(new pcl::PointCloud<pcl::PointNormal>());
-//        pcl::concatenateFields(*cloud, *cloudNormals, *result);
-
-        pcl::search::KdTree<pcl::PointNormal>::Ptr tree(new pcl::search::KdTree<pcl::PointNormal>());
-        pcl::NormalEstimation<pcl::PointNormal, pcl::Normal> normalEstimation;
-        tree->setInputCloud(cloud);
-
-        pcl::IndicesPtr kIndices(pcl::make_shared<std::vector<int>>());
-        kIndices->resize(5);
-        std::vector<float> kDistances(5);
-
-        float maxZ = cloud->points[0].z;
-        float maxIdx = 0;
-        for (size_t i = 1; i < cloud->points.size(); ++i) {
-            if (cloud->points[i].z > maxZ) {
-                maxIdx = i;
-                maxZ = cloud->points[i].z;
-            }
-        }
-
-        // Find KNN
-        pcl::PointNormal& maxPoint = cloud->points[maxIdx];
-        int found = tree->nearestKSearch(maxPoint, 5, *kIndices, kDistances);
-        assert((size_t) found == 5);
-
-        // Compute normal from KNN
-        normalEstimation.computePointNormal(*cloud, *kIndices, maxPoint.normal_x, maxPoint.normal_y, maxPoint.normal_z, maxPoint.curvature);
-
-        Eigen::Vector3f upVector(0.0f, 0.0f, 1.0f);
-        if (maxPoint.getNormalVector3fMap().dot(upVector) < 0) {
-            // Normal of point with maximum z-coord should point upwards, invert normal
-            maxPoint.normal_x *= -1;
-            maxPoint.normal_y *= -1;
-            maxPoint.normal_z *= -1;
-        }
-
-        std::unordered_set<size_t> visitedPoints;
-        std::queue<size_t> toVisit;
-        toVisit.push(maxIdx);
-        while (!toVisit.empty()) {
-            size_t idx = toVisit.front();
-            toVisit.pop();
-            if (visitedPoints.find(idx) != visitedPoints.end())
-                continue;
-
-            visitedPoints.insert(idx);
-
-            pcl::PointNormal& point = cloud->points[idx];
-
-            int found = tree->nearestKSearch(point, 5, *kIndices, kDistances);
-            assert((size_t) found == 5);
-
-            for (size_t neighbourIdx : *kIndices) {
-                if (visitedPoints.find(neighbourIdx) != visitedPoints.end())
-                    continue;
-
-                toVisit.push(neighbourIdx);
-                pcl::PointNormal& neighbourPoint = cloud->points[neighbourIdx];
-
-                std::vector<int> indices(5);
-                std::vector<float> distances(5);
-                int found = tree->nearestKSearch(neighbourPoint, 5, indices, distances);
-                assert((size_t) found == 5);
-
-                // Compute normal from KNN
-                normalEstimation.computePointNormal(*cloud, indices, neighbourPoint.normal_x, 
-                    neighbourPoint.normal_y, neighbourPoint.normal_z, neighbourPoint.curvature);
-
-                // Flip if necessary
-                if (neighbourPoint.getNormalVector3fMap().dot(point.getNormalVector3fMap()) < 0) {
-                    // Normal of point with maximum z-coord should point upwards, invert normal
-                    neighbourPoint.normal_x *= -1;
-                    neighbourPoint.normal_y *= -1;
-                    neighbourPoint.normal_z *= -1;
-                }
-            }
-        }
-
-        // TOO complicated...
-        // Find NN with most minimal normal angle difference
-        // auto vec = maxPoint.getNormalVector3fMap();
-        return cloud;
+        return normalizeCloud(cloud);
     }
     throw std::runtime_error("Model could not be loaded");
 }
@@ -213,23 +117,23 @@ int main(int /*argc*/, char ** /*argv*/) {
             CloudModel("Bunny", normalizeCloud(bunnyCloud()), g_ShaderFolder),
             CloudModel("Sphere", normalizeCloud(sphereCloud(0.5f)), g_ShaderFolder),
 
-            CloudModel("Bunny 3.0 MB", normalizeCloud(loadModel("bunny/bun_zipper.ply")), g_ShaderFolder),
-            CloudModel("Bunny 0.7 MB", normalizeCloud(loadModel("bunny/bun_zipper_res2.ply")), g_ShaderFolder),
-            CloudModel("Bunny 0.2 MB", normalizeCloud(loadModel("bunny/bun_zipper_res3.ply")), g_ShaderFolder),
-            CloudModel("Bunny 0.03 MB", normalizeCloud(loadModel("bunny/bun_zipper_res4.ply")), g_ShaderFolder),
+            CloudModel("Bunny 3.0 MB", loadModel("bunny/bun_zipper.ply"), g_ShaderFolder),
+            CloudModel("Bunny 0.7 MB", loadModel("bunny/bun_zipper_res2.ply"), g_ShaderFolder),
+            CloudModel("Bunny 0.2 MB", loadModel("bunny/bun_zipper_res3.ply"), g_ShaderFolder),
+            CloudModel("Bunny 0.03 MB", loadModel("bunny/bun_zipper_res4.ply"), g_ShaderFolder),
 
-            CloudModel("Drill VRIP", normalizeCloud(loadModel("drill/drill_shaft_vrip.ply")), g_ShaderFolder),
-            CloudModel("Drill Zipper", normalizeCloud(loadModel("drill/drill_shaft_zip.ply")), g_ShaderFolder),
+            CloudModel("Drill VRIP", loadModel("drill/drill_shaft_vrip.ply"), g_ShaderFolder),
+            CloudModel("Drill Zipper", loadModel("drill/drill_shaft_zip.ply"), g_ShaderFolder),
 
-            CloudModel("Buddha 10.9 MB", normalizeCloud(loadModel("happy_recon/happy_vrip_res2.ply")), g_ShaderFolder),
-            CloudModel("Buddha 2.4 MB", normalizeCloud(loadModel("happy_recon/happy_vrip_res3.ply")), g_ShaderFolder),
-            CloudModel("Buddha 0.5 MB", normalizeCloud(loadModel("happy_recon/happy_vrip_res4.ply")), g_ShaderFolder),
+            CloudModel("Buddha 10.9 MB", loadModel("happy_recon/happy_vrip_res2.ply"), g_ShaderFolder),
+            CloudModel("Buddha 2.4 MB", loadModel("happy_recon/happy_vrip_res3.ply"), g_ShaderFolder),
+            CloudModel("Buddha 0.5 MB", loadModel("happy_recon/happy_vrip_res4.ply"), g_ShaderFolder),
 
-            CloudModel("Dragon 7.3 MB", normalizeCloud(loadModel("dragon_recon/dragon_vrip_res2.ply")), g_ShaderFolder),
-            CloudModel("Dragon 1.7 MB", normalizeCloud(loadModel("dragon_recon/dragon_vrip_res3.ply")), g_ShaderFolder),
-            CloudModel("Dragon 0.4 MB", normalizeCloud(loadModel("dragon_recon/dragon_vrip_res4.ply")), g_ShaderFolder),
+            CloudModel("Dragon 7.3 MB", loadModel("dragon_recon/dragon_vrip_res2.ply"), g_ShaderFolder),
+            CloudModel("Dragon 1.7 MB", loadModel("dragon_recon/dragon_vrip_res3.ply"), g_ShaderFolder),
+            CloudModel("Dragon 0.4 MB", loadModel("dragon_recon/dragon_vrip_res4.ply"), g_ShaderFolder),
 
-            CloudModel("Armadillo", normalizeCloud(loadModel("Armadillo.ply")), g_ShaderFolder),
+            CloudModel("Armadillo", loadModel("Armadillo.ply"), g_ShaderFolder),
     };
 
     std::array<const char *, models.size()> modelNames{};
@@ -299,10 +203,11 @@ int main(int /*argc*/, char ** /*argv*/) {
 
     double reconstructionTime = 0.0f;
     int neighbourhoodSize = 3;
-    int currentModel = 0;
+    int currentModelIdx = 0;
     int gridResX = 10;
     int gridResY = 10;
     int gridResZ = 10;
+    CloudModel* currentModel = &models[currentModelIdx];
 
     int methodID = (int) ReconstructionMethod::ModifiedHoppe;
 
@@ -323,47 +228,51 @@ int main(int /*argc*/, char ** /*argv*/) {
             glDrawArrays(GL_LINES, 0, 2);
         }
 
-        models[currentModel].Draw(pvm, color);
+        currentModel->Draw(pvm, color);
 
         // GUI
         label("FPS: " + std::to_string(ImGui::GetIO().Framerate));
         ImGui::Begin("Options", nullptr, ImVec2(300, 500));
 
-        if (ImGui::Combo("Model", &currentModel, modelNames.data(), modelNames.size())) {
-            gridResX = models[currentModel].m_Grid.GetResX();
-            gridResY = models[currentModel].m_Grid.GetResY();
-            gridResZ = models[currentModel].m_Grid.GetResZ();
+        if (ImGui::Combo("Model", &currentModelIdx, modelNames.data(), modelNames.size())) {
+            currentModel = &models[currentModelIdx];
+            gridResX = currentModel->m_Grid.GetResX();
+            gridResY = currentModel->m_Grid.GetResY();
+            gridResZ = currentModel->m_Grid.GetResZ();
         }
 
-        ImGui::Text("Point count: %lu", models[currentModel].CloudSize());
-        ImGui::Text("Triangle count: %lu", models[currentModel].TriangleCount());
+        ImGui::Text("Point count: %lu", currentModel->CloudSize());
+        ImGui::Text("Triangle count: %lu", currentModel->TriangleCount());
         ImGui::Text("Reconstruction time: %f", reconstructionTime);
+        ImGui::Text("Normals estimated: %s", currentModel->m_NormalsEstimated ? "Yes" : "No");
+        if (ImGui::Button("Estimate normals"))
+            currentModel->EstimateNormals();
 
         ImGui::Combo("Method", &methodID, s_MethodLabels.data(), s_MethodLabels.size());
 
         auto method = static_cast<ReconstructionMethod>(methodID);
         if (ImGui::Button("Reconstruct"))
-            reconstructionTime = models[currentModel].Reconstruct(method);
+            reconstructionTime = currentModel->Reconstruct(method);
 
         auto renderGridGUI = [&]() {
             // Cannot merge due to short circuit || evaluation. Causes flickering
             // when moving the slider because the render command is skipped
             ImGui::Text("Grid resolution");
             if (ImGui::SliderInt("X", &gridResX, 5, 100))
-                models[currentModel].m_Grid.SetResX(gridResX);
+                currentModel->m_Grid.SetResX(gridResX);
             if (ImGui::SliderInt("Y", &gridResY, 5, 100))
-                models[currentModel].m_Grid.SetResY(gridResY);
+                currentModel->m_Grid.SetResY(gridResY);
             if (ImGui::SliderInt("Z", &gridResZ, 5, 100))
-                models[currentModel].m_Grid.SetResZ(gridResZ);
+                currentModel->m_Grid.SetResZ(gridResZ);
             if (ImGui::Button("Regenerate grid"))
-                models[currentModel].m_Grid.Regenerate();
+                currentModel->m_Grid.Regenerate();
         };
 
         switch (method) {
             case ReconstructionMethod::ModifiedHoppe:
                 ImGui::Text("Neighbourhood size");
                 if (ImGui::SliderInt("", &neighbourhoodSize, 1, 10))
-                    models[currentModel].m_NeighbourhoodSize = (size_t)neighbourhoodSize;
+                    currentModel->m_NeighbourhoodSize = (size_t)neighbourhoodSize;
 
                 renderGridGUI();
                 break;
@@ -371,63 +280,66 @@ int main(int /*argc*/, char ** /*argv*/) {
             case ReconstructionMethod::MLS:
                 ImGui::Text("Neighbourhood size");
                 if (ImGui::SliderInt("", &neighbourhoodSize, 1, 25))
-                    models[currentModel].m_NeighbourhoodSize = (size_t)neighbourhoodSize;
+                    currentModel->m_NeighbourhoodSize = (size_t)neighbourhoodSize;
 
                 renderGridGUI();
                 break;
 
             case ReconstructionMethod::PCL_Hoppe:
-                ImGui::SliderFloat("Iso level", &models[currentModel].m_IsoLevel, 0.0f, 1.0f);
+                ImGui::SliderFloat("Iso level", &currentModel->m_IsoLevel, 0.0f, 1.0f);
                 renderGridGUI();
                 break;
 
             case ReconstructionMethod::PCL_MarchingCubesRBF:
                 ImGui::Text("Off surface displacement");
-                ImGui::SliderFloat("", &models[currentModel].m_OffSurfaceDisplacement, 0.0f, 1.0f);
-                ImGui::SliderFloat("Iso level", &models[currentModel].m_IsoLevel, 0.0f, 1.0f);
+                ImGui::SliderFloat("", &currentModel->m_OffSurfaceDisplacement, 0.0f, 1.0f);
+                ImGui::SliderFloat("Iso level", &currentModel->m_IsoLevel, 0.0f, 1.0f);
                 renderGridGUI();
                 break;
 
             case ReconstructionMethod::PCL_Poisson:
-                ImGui::SliderInt("Depth", &models[currentModel].m_Depth, 1, 10);
-                ImGui::SliderInt("Minimum depth", &models[currentModel].m_MinDepth, 1, 10);
-                ImGui::SliderInt("Iso divide", &models[currentModel].m_IsoDivide, 1, 16);
-                ImGui::SliderInt("Solver divide", &models[currentModel].m_SolverDivide, 1, 16);
-                ImGui::SliderFloat("Point weight", &models[currentModel].m_PointWeight, 1.0f, 10.0f);
-                ImGui::SliderFloat("Samples per node", &models[currentModel].m_SamplesPerNode, 1.0f, 10.0f);
-                ImGui::SliderFloat("Scale", &models[currentModel].m_Scale, 1.1f, 5.0f);
+                ImGui::SliderInt("Depth", &currentModel->m_Depth, 1, 10);
+                ImGui::SliderInt("Minimum depth", &currentModel->m_MinDepth, 1, 10);
+                ImGui::SliderInt("Iso divide", &currentModel->m_IsoDivide, 1, 16);
+                ImGui::SliderInt("Solver divide", &currentModel->m_SolverDivide, 1, 16);
+                ImGui::SliderFloat("Point weight", &currentModel->m_PointWeight, 1.0f, 10.0f);
+                ImGui::SliderFloat("Samples per node", &currentModel->m_SamplesPerNode, 1.0f, 10.0f);
+                ImGui::SliderFloat("Scale", &currentModel->m_Scale, 1.1f, 5.0f);
                 break;
 
             case ReconstructionMethod::PCL_ConcaveHull:
-                ImGui::SliderFloat("Alpha", &models[currentModel].m_Alpha, 0.00001f, 0.2f);
+                ImGui::SliderFloat("Alpha", &currentModel->m_Alpha, 0.00001f, 0.2f);
                 break;
 
             case ReconstructionMethod::PCL_ConvexHull:
                 break;
 
             case ReconstructionMethod::PCL_GreedyProjectionTriangulation:
-                ImGui::SliderInt("Maximum NN", &models[currentModel].m_MaxNN, 1, 300);
-                ImGui::SliderFloat("Max surface angle", &models[currentModel].m_MaxSurfaceAngle, 1.0f, 150.0f);
-                ImGui::SliderFloat("Max triangle angle", &models[currentModel].m_MaxAngle, 1.0f, 150.0f);
-                ImGui::SliderFloat("Min triangle angle", &models[currentModel].m_MinAngle, 1.0f, 120.0f);
-                ImGui::SliderFloat("Search radius", &models[currentModel].m_SearchRadius, 0.1f, 10.0f);
-                ImGui::SliderFloat("Mu", &models[currentModel].m_Mu, 0.1f, 10.0f);
+                ImGui::SliderInt("Maximum NN", &currentModel->m_MaxNN, 1, 300);
+                ImGui::SliderFloat("Max surface angle", &currentModel->m_MaxSurfaceAngle, 1.0f, 150.0f);
+                ImGui::SliderFloat("Max triangle angle", &currentModel->m_MaxAngle, 1.0f, 150.0f);
+                ImGui::SliderFloat("Min triangle angle", &currentModel->m_MinAngle, 1.0f, 120.0f);
+                ImGui::SliderFloat("Search radius", &currentModel->m_SearchRadius, 0.1f, 10.0f);
+                ImGui::SliderFloat("Mu", &currentModel->m_Mu, 0.1f, 10.0f);
                 break;
 
             case ReconstructionMethod::PCL_OrganizedFastMesh:
-                ImGui::SliderFloat("Angle tolerance", &models[currentModel].m_AngleTolerance, 1.0f, 90.0f);
-                ImGui::SliderFloat("Distance tolerance", &models[currentModel].m_DistTolerance, 0.0f, 10.0f);
-                ImGui::SliderFloat("Max edge length", &models[currentModel].m_A, 0.001f, 1.0f);
+                ImGui::SliderFloat("Angle tolerance", &currentModel->m_AngleTolerance, 1.0f, 90.0f);
+                ImGui::SliderFloat("Distance tolerance", &currentModel->m_DistTolerance, 0.0f, 10.0f);
+                ImGui::SliderFloat("Max edge length", &currentModel->m_A, 0.001f, 1.0f);
                 break;
         }
 
         ImGui::Text("Debug Options");
-        ImGui::Checkbox("Show mesh", &models[currentModel].m_ShowMesh);
-        ImGui::Checkbox("Show grid", &models[currentModel].m_ShowGrid);
-        ImGui::Checkbox("Show BB", &models[currentModel].m_ShowBB);
-        ImGui::Checkbox("Show input PC", &models[currentModel].m_ShowInputPC);
-        if (models[currentModel].m_ShowInputPC) {
-            ImGui::Checkbox("Show normals", &models[currentModel].m_ShowNormals);
+        ImGui::Checkbox("Show mesh", &currentModel->m_ShowMesh);
+        ImGui::Checkbox("Show grid", &currentModel->m_ShowGrid);
+        ImGui::Checkbox("Show BB", &currentModel->m_ShowBB);
+        ImGui::Checkbox("Show input PC", &currentModel->m_ShowInputPC);
+        if (ImGui::Checkbox("Show normals", &currentModel->m_ShowNormals)) {
+            currentModel->EstimateNormals();
+        }
+        if (ImGui::Checkbox("Show spanning tree", &currentModel->m_ShowSpanningTree)) {
+            currentModel->EstimateNormals();
         }
 
         ImGui::End();
@@ -444,7 +356,6 @@ int main(int /*argc*/, char ** /*argv*/) {
         }
     });
 
-    // TODO: implement some shortcuts in the future
     app.addKeyPressCallback([&](SDL_Keycode code, uint16_t) {
         switch (code) {
             case SDLK_ESCAPE:

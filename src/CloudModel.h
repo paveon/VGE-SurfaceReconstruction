@@ -239,6 +239,7 @@ class CloudModel {
         Mesh,
         Cloud,
         CloudNormals,
+        SpanningTree,
         BUFFER_COUNT
     };
 
@@ -251,6 +252,7 @@ class CloudModel {
     std::vector<GLuint> m_MeshIndices;
     std::vector<glm::vec3> m_MeshVertices;
     std::vector<glm::vec3> m_CloudNormals;
+    std::vector<glm::vec3> m_TreeEdges; // Spanning tree edges for visualization
 
     /* Maps indices of two vertices forming an MC edge to an index of an interpolated edge vertex */
     std::unordered_map<std::pair<size_t, size_t>, size_t, PairHash> m_VertexIndices;
@@ -268,6 +270,8 @@ class CloudModel {
 
     void ExtractPclReconstructionData(const std::vector<pcl::Vertices> &outputIndices,
                                       const pcl::PointCloud<pcl::PointNormal>::Ptr &surfacePoints);
+
+    void MarchCubes();
 
     double HoppeReconstruction();
 
@@ -324,6 +328,8 @@ public:
     bool m_ShowMesh = true;
     bool m_ShowInputPC = true;
     bool m_ShowNormals = false;
+    bool m_ShowSpanningTree = false;
+    bool m_NormalsEstimated = false;
 
     CloudModel(const std::string& name, pcl::PointCloud<pcl::PointNormal>::Ptr cloud, const std::string &shaderDir);
 
@@ -336,6 +342,8 @@ public:
     size_t CloudSize() const { return m_Cloud->points.size(); }
 
     size_t TriangleCount() const { return m_MeshIndices.size() / 3; }
+
+    void EstimateNormals();
 };
 
 
